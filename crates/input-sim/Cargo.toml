@@ -1,0 +1,13 @@
+[package]
+name = "input-sim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Keyboard/mouse input simulation wrapper over RustDesk's enigo crate"
+
+[dependencies]
+enigo = { path = "../../vendor/rustdesk/libs/enigo" }
+rd-common = { path = "../rd-common" }
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

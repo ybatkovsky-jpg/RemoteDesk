@@ -1,0 +1,13 @@
+[package]
+name = "screen-capture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cross-platform screen capture (stub for dev; native via scrap when available)"
+
+[dependencies]
+rd-common = { path = "../rd-common" }
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+anyhow.workspace = true

@@ -1,0 +1,18 @@
+[package]
+name = "rd-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared types for RemoteDesk — wraps RustDesk's hbb_common and extends with app-specific types"
+
+[dependencies]
+# Re-export RustDesk's hbb_common
+hbb_common = { path = "../../vendor/rustdesk/libs/hbb_common" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+protobuf.workspace = true
+uuid.workspace = true
+sha2.workspace = true
+anyhow.workspace = true

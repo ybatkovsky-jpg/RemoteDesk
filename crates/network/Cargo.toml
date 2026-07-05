@@ -1,0 +1,18 @@
+[package]
+name = "network"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "P2P networking, TCP transport, and frame protocol for RemoteDesk"
+
+[dependencies]
+rd-common = { path = "../rd-common" }
+codec = { path = "../codec" }
+screen-capture = { path = "../screen-capture" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+bincode = "1.3"

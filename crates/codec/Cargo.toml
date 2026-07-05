@@ -1,0 +1,13 @@
+[package]
+name = "codec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Video frame compression (zstd for Phase 1 MVP, H.264 planned)"
+
+[dependencies]
+rd-common = { path = "../rd-common" }
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+zstd = "0.13"
