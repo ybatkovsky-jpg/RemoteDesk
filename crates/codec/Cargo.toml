@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Video frame compression (zstd for Phase 1 MVP, H.264 planned)"
 
+[features]
+openh264 = []
+hwcodec = []
+
 [dependencies]
 rd-common = { path = "../rd-common" }
 serde.workspace = true

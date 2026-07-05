@@ -65,14 +65,115 @@ impl InputSimulator {
 
     /// Get clipboard content
     pub fn get_clipboard(&mut self) -> Result<String> {
-        // enigo clipboard support varies by platform
-        // Will implement properly in Phase 2
-        Ok(String::new())
+        #[cfg(target_os = "windows")]
+        {
+            clipboard_win::get_clipboard_text()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            // Linux: use xclip/xsel; macOS: use NSPasteboard
+            tracing::warn!("Clipboard get not implemented on this platform");
+            Ok(String::new())
+        }
     }
 
     /// Set clipboard content
-    pub fn set_clipboard(&mut self, _content: &str) -> Result<()> {
-        // Will implement in Phase 2
+    pub fn set_clipboard(&mut self, content: &str) -> Result<()> {
+        #[cfg(target_os = "windows")]
+        {
+            clipboard_win::set_clipboard_text(content)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            tracing::warn!("Clipboard set not implemented on this platform");
+            Ok(())
+        }
+    }
+}
+
+/// Windows clipboard using raw Win32 FFI (avoids windows crate version conflicts).
+#[cfg(target_os = "windows")]
+mod clipboard_win {
+    use rd_common::Result;
+
+    // Raw Win32 FFI declarations.
+    extern "system" {
+        fn OpenClipboard(hWndNewOwner: isize) -> i32;
+        fn CloseClipboard() -> i32;
+        fn EmptyClipboard() -> i32;
+        fn GetClipboardData(uFormat: u32) -> isize;
+        fn SetClipboardData(uFormat: u32, hMem: isize) -> isize;
+        fn GlobalAlloc(uFlags: u32, dwBytes: usize) -> isize;
+        fn GlobalLock(hMem: isize) -> *mut u8;
+        fn GlobalUnlock(hMem: isize) -> i32;
+    }
+
+    const CF_UNICODETEXT: u32 = 13;
+    const GMEM_MOVEABLE: u32 = 0x0002;
+
+    pub fn get_clipboard_text() -> Result<String> {
+        unsafe {
+            if OpenClipboard(0) == 0 {
+                return Err(rd_common::Error::Input("Failed to open clipboard".into()));
+            }
+
+            let result = {
+                let handle = GetClipboardData(CF_UNICODETEXT);
+                if handle != 0 {
+                    let ptr = GlobalLock(handle);
+                    if !ptr.is_null() {
+                        let len = (0..).take_while(|&i| *((ptr as *const u16).add(i)) != 0).count();
+                        let slice = std::slice::from_raw_parts(ptr as *const u16, len);
+                        let text = String::from_utf16_lossy(slice);
+                        GlobalUnlock(handle);
+                        Ok(text)
+                    } else {
+                        Err(rd_common::Error::Input("Failed to lock clipboard".into()))
+                    }
+                } else {
+                    Ok(String::new())
+                }
+            };
+
+            CloseClipboard();
+            result
+        }
+    }
+
+    pub fn set_clipboard_text(text: &str) -> Result<()> {
+        use std::os::windows::ffi::OsStrExt;
+
+        let wide: Vec<u16> = std::ffi::OsStr::new(text)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        unsafe {
+            if OpenClipboard(0) == 0 {
+                return Err(rd_common::Error::Input("Failed to open clipboard for set".into()));
+            }
+
+            EmptyClipboard();
+
+            let mem = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2);
+            if mem == 0 {
+                CloseClipboard();
+                return Err(rd_common::Error::Input("GlobalAlloc failed".into()));
+            }
+
+            let ptr = GlobalLock(mem);
+            if ptr.is_null() {
+                CloseClipboard();
+                return Err(rd_common::Error::Input("GlobalLock failed".into()));
+            }
+
+            std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr as *mut u16, wide.len());
+            GlobalUnlock(mem);
+
+            SetClipboardData(CF_UNICODETEXT, mem);
+            CloseClipboard();
+        }
+
         Ok(())
     }
 }

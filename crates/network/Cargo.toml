@@ -9,6 +9,8 @@ description = "P2P networking, TCP transport, and frame protocol for RemoteDesk"
 rd-common = { path = "../rd-common" }
 codec = { path = "../codec" }
 screen-capture = { path = "../screen-capture" }
+input-sim = { path = "../input-sim" }
+crypto = { path = "../crypto" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

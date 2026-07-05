@@ -1,5 +1,5 @@
 import { createSignal, onCleanup, onMount } from "solid-js";
-import { clientGetFrame, clientGetFrameSize, sendMouseEvent, sendKeyEvent } from "../lib/tauri";
+import { clientGetFrameRaw, clientGetFrameSize, sendMouseEvent, sendKeyEvent } from "../lib/tauri";
 
 interface RemoteScreenProps {
   connected: boolean;
@@ -28,28 +28,22 @@ export default function RemoteScreen(props: RemoteScreenProps) {
           }
         }
 
-        // Get latest frame
-        const b64 = await clientGetFrame();
-        if (b64 && canvasRef) {
+        // Get latest frame as raw ArrayBuffer (no base64 overhead)
+        const bytes = await clientGetFrameRaw();
+        if (bytes && canvasRef) {
           const ctx = canvasRef.getContext("2d");
           if (!ctx) return;
-
-          // Decode base64 to bytes
-          const binary = atob(b64);
-          const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) {
-            bytes[i] = binary.charCodeAt(i);
-          }
 
           const size = frameSize();
           if (!size) return;
 
-          // Create ImageData from raw BGRA
-          const imgData = new ImageData(
-            new Uint8ClampedArray(bytes.buffer),
-            size.w,
-            size.h
+          // Create ImageData from raw BGRA buffer (Uint8Array from Tauri)
+          const clamped = new Uint8ClampedArray(
+            bytes.buffer as unknown as ArrayBuffer,
+            bytes.byteOffset,
+            bytes.byteLength
           );
+          const imgData = new ImageData(clamped, size.w, size.h);
 
           // Resize canvas if needed
           if (canvasRef.width !== size.w || canvasRef.height !== size.h) {

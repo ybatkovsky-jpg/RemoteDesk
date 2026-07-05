@@ -6,7 +6,9 @@
 pub mod protocol;
 pub mod host;
 pub mod client;
+pub mod udp;
 
 pub use host::HostSession;
 pub use client::ClientSession;
 pub use protocol::NetworkMessage;
+pub use udp::UdpTransport;

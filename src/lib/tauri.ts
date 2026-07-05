@@ -74,6 +74,11 @@ export async function clientGetFrame(): Promise<string | null> {
   return invoke("client_get_frame");
 }
 
+/** Get raw BGRA frame as ArrayBuffer — no base64 overhead. */
+export async function clientGetFrameRaw(): Promise<Uint8Array | null> {
+  return invoke("client_get_frame_raw");
+}
+
 export async function clientGetFrameSize(): Promise<[number, number]> {
   return invoke("client_get_frame_size");
 }

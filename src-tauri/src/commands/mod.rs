@@ -1,6 +1,7 @@
 use crate::state::{AppState, AppStatus};
 use rd_common::proto::{DisplayInfo, KeyEvent, MouseEvent};
 use network::client::ClientSession;
+use network::host::HostSession;
 use screen_capture;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
@@ -62,13 +63,19 @@ pub async fn start_host(
 ) -> Result<(), String> {
     tracing::info!("Starting host on port {} (display {}, {} fps)", port, display_id, fps);
 
-    let mut host = network::host::HostSession::new(port);
+    let host = Arc::new(tokio::sync::Mutex::new(HostSession::new(port)));
 
-    // Spawn the host in background
-    // Note: host will be moved into the task, we can't store it after spawning
+    // Store handle so stop_host can access it.
+    *state.host.lock().await = Some(host.clone());
+
+    // Spawn the host in background — clone Arc into the task.
     let app_clone = app.clone();
     tokio::spawn(async move {
-        match host.run(display_id, fps).await {
+        let result = {
+            let mut h = host.lock().await;
+            h.run(display_id, fps).await
+        };
+        match result {
             Ok(_) => {
                 let _ = app_clone.emit("host-status", serde_json::json!({"status": "stopped"}));
             }
@@ -81,9 +88,6 @@ pub async fn start_host(
         }
     });
 
-    // Store a flag instead of the moved host
-    *state.host.lock().await = None;
-
     let _ = app.emit(
         "host-status",
         serde_json::json!({"status": "listening", "port": port}),
@@ -94,8 +98,9 @@ pub async fn start_host(
 
 #[tauri::command]
 pub async fn stop_host(state: State<'_, AppState>) -> Result<(), String> {
+    tracing::info!("Stopping host");
     if let Some(host) = state.host.lock().await.as_ref() {
-        host.stop();
+        host.lock().await.stop();
     }
     *state.host.lock().await = None;
     Ok(())
@@ -158,6 +163,18 @@ pub async fn client_get_frame(state: State<'_, AppState>) -> Result<Option<Strin
                 let b64 = base64::engine::general_purpose::STANDARD.encode(&frame.data);
                 Ok(Some(b64))
             }
+            None => Ok(None),
+        },
+        None => Err("Not connected".into()),
+    }
+}
+
+/// Return raw BGRA bytes — frontend receives as ArrayBuffer (no base64 overhead).
+#[tauri::command]
+pub async fn client_get_frame_raw(state: State<'_, AppState>) -> Result<Option<Vec<u8>>, String> {
+    match state.client.lock().await.as_ref() {
+        Some(client) => match client.latest_frame().await {
+            Some(frame) => Ok(Some(frame.data)),
             None => Ok(None),
         },
         None => Err("Not connected".into()),

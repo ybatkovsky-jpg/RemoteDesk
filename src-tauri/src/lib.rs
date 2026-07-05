@@ -30,6 +30,7 @@ pub fn run() {
             commands::client_connect,
             commands::client_disconnect,
             commands::client_get_frame,
+            commands::client_get_frame_raw,
             commands::client_get_frame_size,
             commands::client_get_state,
             commands::send_key_event,

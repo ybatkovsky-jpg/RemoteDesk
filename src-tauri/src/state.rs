@@ -1,16 +1,15 @@
-use rd_common::proto::DisplayInfo;
-use network::client::{ClientSession, ConnectionState as ClientConnectionState};
+use network::client::ClientSession;
 use network::host::HostSession;
 use std::sync::Arc;
 use tokio::sync::{Mutex, broadcast};
 
 /// Application-wide state managed by Tauri
 pub struct AppState {
-    /// Host session (when acting as host)
-    pub host: Mutex<Option<HostSession>>,
+    /// Host session wrapped for shared access between commands and background task.
+    pub host: Mutex<Option<Arc<Mutex<HostSession>>>>,
     /// Client session (when connected to a remote host)
     pub client: Mutex<Option<Arc<ClientSession>>>,
-    /// Host shutdown signal
+    /// Host shutdown signal (deprecated — host now uses its own internal shutdown).
     pub host_shutdown: Mutex<Option<broadcast::Sender<()>>>,
     /// App handle for emitting events (set during setup)
     pub app_handle: Mutex<Option<tauri::AppHandle>>,
