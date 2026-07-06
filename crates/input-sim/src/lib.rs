@@ -4,15 +4,25 @@
 //! - **Windows**: `SendInput` API
 //! - **macOS**: Core Graphics events (`CGEvent`)
 //! - **Linux**: `libxdo` (X11) / `evdev` (Wayland)
+//! - **Android**: JNI bridge via scrap (`call_main_service_pointer_input`, `call_main_service_key_event`)
 
+#[cfg(target_os = "android")]
+mod android;
+#[cfg(target_os = "android")]
+pub use android::AndroidInputSimulator as InputSimulator;
+
+#[cfg(not(target_os = "android"))]
 use rd_common::proto::{KeyEvent, MouseEvent, MouseEventType};
+#[cfg(not(target_os = "android"))]
 use rd_common::Result;
 
-/// Input simulator wrapping enigo
+/// Input simulator wrapping enigo (or Android JNI bridge)
+#[cfg(not(target_os = "android"))]
 pub struct InputSimulator {
     enigo: enigo::Enigo,
 }
 
+#[cfg(not(target_os = "android"))]
 impl InputSimulator {
     /// Create a new input simulator for the current platform
     pub fn new() -> Self {
@@ -25,7 +35,6 @@ impl InputSimulator {
     pub fn simulate_key(&mut self, event: &KeyEvent) -> Result<()> {
         use enigo::KeyboardControllable;
 
-        // Map common keycodes to enigo Key enum
         let key = keycode_to_enigo(event.keycode);
 
         if event.down {
@@ -71,7 +80,6 @@ impl InputSimulator {
         }
         #[cfg(not(target_os = "windows"))]
         {
-            // Linux: use xclip/xsel; macOS: use NSPasteboard
             tracing::warn!("Clipboard get not implemented on this platform");
             Ok(String::new())
         }

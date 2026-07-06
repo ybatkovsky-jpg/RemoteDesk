@@ -40,6 +40,9 @@
       "frameworks": [],
       "minimumSystemVersion": "11.0"
     },
-    "linux": {}
+    "linux": {},
+    "android": {
+      "minSdkVersion": 26
+    }
   }
 }

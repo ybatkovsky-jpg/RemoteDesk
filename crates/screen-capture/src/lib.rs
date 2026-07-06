@@ -18,7 +18,7 @@ pub struct Frame {
 }
 
 /// Screen capturer — real when `native` feature is enabled
-#[cfg(feature = "native")]
+#[cfg(all(feature = "native", not(target_os = "android")))]
 pub struct Capturer {
     inner: scrap::Capturer,
     display: scrap::Display,
@@ -27,8 +27,18 @@ pub struct Capturer {
     height: u32,
 }
 
+/// Android capturer using MediaCodec/MediaProjection via scrap
+#[cfg(target_os = "android")]
+pub struct Capturer {
+    display_id: usize,
+    width: u32,
+    height: u32,
+    /// On Android, scrap's Capturer uses JNI to receive frames from Java.
+    inner: scrap::Capturer,
+}
+
 /// Stub capturer for dev builds
-#[cfg(not(feature = "native"))]
+#[cfg(not(any(feature = "native", target_os = "android")))]
 pub struct Capturer {
     display_id: usize,
     width: u32,
@@ -59,6 +69,32 @@ impl Capturer {
             display_id: display_index,
             width,
             height,
+        })
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn new(display_index: usize) -> Result<Self> {
+        // On Android, scrap uses MediaProjection — display is always the primary screen.
+        let displays = scrap::Display::all().map_err(|e| {
+            Error::Capture(format!("Failed to enumerate Android display: {}", e))
+        })?;
+
+        let display = displays.into_iter().next().ok_or_else(|| {
+            Error::Capture("No Android display found".into())
+        })?;
+
+        let width = display.width() as u32;
+        let height = display.height() as u32;
+
+        let inner = scrap::Capturer::new(display).map_err(|e| {
+            Error::Capture(format!("Failed to create Android capturer: {}", e))
+        })?;
+
+        Ok(Self {
+            display_id: display_index,
+            width,
+            height,
+            inner,
         })
     }
 
@@ -94,6 +130,32 @@ impl Capturer {
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
             Err(e) => Err(Error::Capture(format!("Capture error: {}", e))),
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn capture_frame(&mut self, timeout_ms: u64) -> Result<Option<Frame>> {
+        let timeout = std::time::Duration::from_millis(timeout_ms);
+
+        match self.inner.frame(timeout) {
+            Ok(frame) => {
+                let data = frame_to_bgra_android(&frame);
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+
+                Ok(Some(Frame {
+                    data,
+                    width: self.width,
+                    height: self.height,
+                    stride: self.width * 4,
+                    display_id: self.display_id,
+                    timestamp,
+                }))
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+            Err(e) => Err(Error::Capture(format!("Android capture error: {}", e))),
         }
     }
 
@@ -136,6 +198,15 @@ fn frame_to_bgra(frame: &scrap::Frame<'_>) -> Vec<u8> {
     }
 }
 
+#[cfg(target_os = "android")]
+fn frame_to_bgra_android(frame: &scrap::Frame<'_>) -> Vec<u8> {
+    // On Android, frames arrive as PixelBuffer from MediaCodec.
+    match frame {
+        scrap::Frame::PixelBuffer(pb) => pb.data().to_vec(),
+        _ => vec![],
+    }
+}
+
 /// List all available displays
 #[cfg(feature = "native")]
 pub fn list_displays() -> Result<Vec<DisplayInfo>> {
@@ -155,6 +226,19 @@ pub fn list_displays() -> Result<Vec<DisplayInfo>> {
             dpi: 1.0,
         })
         .collect())
+}
+
+#[cfg(target_os = "android")]
+pub fn list_displays() -> Result<Vec<DisplayInfo>> {
+    // Android has a single primary display.
+    Ok(vec![DisplayInfo {
+        id: 0,
+        name: "Android Screen".into(),
+        width: 1080,
+        height: 1920,
+        is_primary: true,
+        dpi: 2.0,
+    }])
 }
 
 #[cfg(not(feature = "native"))]
