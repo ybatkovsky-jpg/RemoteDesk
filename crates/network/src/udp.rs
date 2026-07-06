@@ -20,7 +20,8 @@ pub const HEADER_SIZE: usize = 10;
 const FLAG_FRAGMENTED: u16 = 0x01;
 const FLAG_LAST_FRAGMENT: u16 = 0x02;
 const FLAG_RELIABLE: u16 = 0x04;
-const FLAG_ACK: u16 = 0x08;
+#[allow(dead_code)]
+const FLAG_ACK: u16 = 0x08; // Reserved for future ACK-based reliability
 
 /// A framed UDP message ready for send or received.
 #[derive(Debug, Clone)]

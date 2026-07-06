@@ -4,7 +4,7 @@
 //! Without `native`: stub implementation for development.
 
 use rd_common::proto::DisplayInfo;
-use rd_common::{Error, Result};
+use rd_common::Result;
 
 /// Represents a captured frame from a display
 #[derive(Debug, Clone)]

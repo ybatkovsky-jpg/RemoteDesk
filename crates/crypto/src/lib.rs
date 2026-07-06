@@ -150,3 +150,77 @@ pub enum CryptoError {
     #[error("Invalid key length")]
     InvalidKey,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_roundtrip() {
+        init();
+
+        let alice = KeyExchange::generate();
+        let bob = KeyExchange::generate();
+
+        let alice_shared = alice.compute_shared_secret(&bob.public_key_bytes());
+        let bob_shared = bob.compute_shared_secret(&alice.public_key_bytes());
+
+        let alice_key = alice_shared.derive_symmetric_key();
+        let bob_key = bob_shared.derive_symmetric_key();
+
+        assert_eq!(alice_key, bob_key, "Shared secrets must derive the same key");
+
+        let mut alice_cipher = SessionCipher::new(&alice_key);
+        let mut bob_cipher = SessionCipher::new(&bob_key);
+
+        let msg = b"Hello, encrypted world!";
+        let (nonce, ciphertext) = alice_cipher.encrypt(msg);
+
+        let decrypted = bob_cipher.decrypt(&nonce, &ciphertext).expect("Decryption must succeed");
+        assert_eq!(decrypted, msg);
+    }
+
+    #[test]
+    fn test_multiple_messages() {
+        init();
+        let key = [42u8; 32];
+        let mut cipher1 = SessionCipher::new(&key);
+        let mut cipher2 = SessionCipher::new(&key);
+
+        for i in 0..100 {
+            let msg = format!("message {}", i);
+            let (nonce, ct) = cipher1.encrypt(msg.as_bytes());
+            let pt = cipher2.decrypt(&nonce, &ct).expect("decrypt must succeed");
+            assert_eq!(pt, msg.as_bytes());
+        }
+    }
+
+    #[test]
+    fn test_wrong_key_fails() {
+        init();
+        let key1 = [1u8; 32];
+        let key2 = [2u8; 32];
+        let mut cipher1 = SessionCipher::new(&key1);
+        let mut cipher2 = SessionCipher::new(&key2);
+
+        let (nonce, ct) = cipher1.encrypt(b"secret");
+        assert!(cipher2.decrypt(&nonce, &ct).is_err(), "Wrong key must fail");
+    }
+
+    #[test]
+    fn test_tampered_ciphertext_fails() {
+        init();
+        let key = [99u8; 32];
+        let mut cipher1 = SessionCipher::new(&key);
+        let mut cipher2 = SessionCipher::new(&key);
+
+        let (nonce, mut ct) = cipher1.encrypt(b"important");
+        if !ct.is_empty() {
+            ct[0] ^= 0xFF; // Tamper with ciphertext.
+        }
+        assert!(
+            cipher2.decrypt(&nonce, &ct).is_err(),
+            "Tampered ciphertext must fail"
+        );
+    }
+}

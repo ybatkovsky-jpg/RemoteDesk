@@ -16,7 +16,7 @@ pub fn get_version() -> String {
 #[tauri::command]
 pub async fn get_app_status(state: State<'_, AppState>) -> Result<AppStatus, String> {
     let has_host = state.host.lock().await.is_some();
-    let has_client = state.client.lock().await.is_some();
+    let _has_client = state.client.lock().await.is_some();
 
     let (mode, conn_state, w, h) = if has_host {
         ("host".into(), "listening".into(), 0u32, 0u32)

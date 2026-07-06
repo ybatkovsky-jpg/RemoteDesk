@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 description = "Cross-platform screen capture (stub for dev; native via scrap when available)"
 
+[features]
+native = []
+
 [dependencies]
 rd-common = { path = "../rd-common" }
 serde.workspace = true

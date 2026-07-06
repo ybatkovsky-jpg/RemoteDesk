@@ -211,3 +211,96 @@ pub async fn read_raw(
 
     Ok(Some(payload))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_message_roundtrip() {
+        let original = NetworkMessage::Hello {
+            client_version: "0.1.0".into(),
+            supported_codecs: vec![CompressionType::Zstd, CompressionType::H264],
+        };
+        let bytes = original.to_bytes().expect("serialize");
+        let restored = NetworkMessage::from_bytes(&bytes).expect("deserialize");
+        match restored {
+            NetworkMessage::Hello {
+                client_version,
+                supported_codecs,
+            } => {
+                assert_eq!(client_version, "0.1.0");
+                assert_eq!(supported_codecs, vec![CompressionType::Zstd, CompressionType::H264]);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_video_frame_roundtrip() {
+        let frame = codec::CompressedFrame {
+            data: vec![1, 2, 3, 4, 5],
+            width: 1920,
+            height: 1080,
+            compression: CompressionType::Zstd,
+            key_frame: true,
+            sequence: 42,
+        };
+        let msg = NetworkMessage::VideoFrame(frame);
+        let bytes = msg.to_bytes().expect("serialize");
+        let restored = NetworkMessage::from_bytes(&bytes).expect("deserialize");
+        match restored {
+            NetworkMessage::VideoFrame(f) => {
+                assert_eq!(f.width, 1920);
+                assert_eq!(f.height, 1080);
+                assert_eq!(f.sequence, 42);
+                assert_eq!(f.compression, CompressionType::Zstd);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_key_event_roundtrip() {
+        let event = KeyEvent {
+            down: true,
+            keycode: 65,  // 'A'
+            scancode: 30,
+            modifiers: 2, // Ctrl
+        };
+        let msg = NetworkMessage::KeyEvent(event.clone());
+        let bytes = msg.to_bytes().expect("serialize");
+        let restored = NetworkMessage::from_bytes(&bytes).expect("deserialize");
+        match restored {
+            NetworkMessage::KeyEvent(e) => {
+                assert!(e.down);
+                assert_eq!(e.keycode, 65);
+                assert_eq!(e.modifiers, 2);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_all_message_variants_serialize() {
+        // Verify every variant serializes/deserializes without panic.
+        let messages = vec![
+            NetworkMessage::Hello { client_version: "v1".into(), supported_codecs: vec![CompressionType::Zstd] },
+            NetworkMessage::Welcome { host_version: "v1".into(), display_width: 1024, display_height: 768, selected_codec: CompressionType::Zstd },
+            NetworkMessage::Ping,
+            NetworkMessage::Pong,
+            NetworkMessage::Disconnect,
+            NetworkMessage::Encrypted(vec![0, 1, 2, 3]),
+            NetworkMessage::UpdateSettings { max_fps: 30, quality: 80 },
+            NetworkMessage::ClipboardText { content: "hello".into() },
+            NetworkMessage::FileRequest { path: "/tmp/test.txt".into() },
+            NetworkMessage::AudioControl { enable: true },
+            NetworkMessage::RegisterPeer { peer_id: "abc".into(), public_addrs: vec!["1.2.3.4:9000".into()] },
+        ];
+
+        for msg in messages {
+            let bytes = msg.to_bytes().expect("serialize");
+            let _restored = NetworkMessage::from_bytes(&bytes).expect("deserialize");
+        }
+    }
+}

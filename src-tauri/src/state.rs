@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, broadcast};
 
 /// Application-wide state managed by Tauri
+#[allow(dead_code)]
 pub struct AppState {
     /// Host session wrapped for shared access between commands and background task.
     pub host: Mutex<Option<Arc<Mutex<HostSession>>>>,

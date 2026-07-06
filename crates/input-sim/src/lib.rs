@@ -23,7 +23,7 @@ impl InputSimulator {
 
     /// Simulate a keyboard event
     pub fn simulate_key(&mut self, event: &KeyEvent) -> Result<()> {
-        use enigo::{Key, KeyboardControllable};
+        use enigo::KeyboardControllable;
 
         // Map common keycodes to enigo Key enum
         let key = keycode_to_enigo(event.keycode);
@@ -40,7 +40,7 @@ impl InputSimulator {
 
     /// Simulate a mouse event
     pub fn simulate_mouse(&mut self, event: &MouseEvent) -> Result<()> {
-        use enigo::{MouseButton, MouseControllable};
+        use enigo::MouseControllable;
 
         match event.event_type {
             MouseEventType::Move => {

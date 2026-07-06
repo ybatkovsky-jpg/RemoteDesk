@@ -36,7 +36,7 @@ pub fn run() {
             commands::send_key_event,
             commands::send_mouse_event,
         ])
-        .setup(|app| {
+        .setup(|_app| {
             tracing::info!("RemoteDesk setup complete");
             Ok(())
         })
