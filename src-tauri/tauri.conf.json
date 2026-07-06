@@ -29,7 +29,7 @@
     "active": true,
     "targets": "all",
     "icon": ["icons/icon.ico"],
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "windows": {
       "nsis": {
         "installMode": "currentUser"
