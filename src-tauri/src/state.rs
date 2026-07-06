@@ -1,7 +1,8 @@
 use network::client::ClientSession;
 use network::host::HostSession;
+use rd_common::config::Config;
 use std::sync::Arc;
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::{broadcast, Mutex};
 
 /// Application-wide state managed by Tauri
 #[allow(dead_code)]
@@ -10,10 +11,16 @@ pub struct AppState {
     pub host: Mutex<Option<Arc<Mutex<HostSession>>>>,
     /// Client session (when connected to a remote host)
     pub client: Mutex<Option<Arc<ClientSession>>>,
-    /// Host shutdown signal (deprecated — host now uses its own internal shutdown).
+    /// Host shutdown signal.
     pub host_shutdown: Mutex<Option<broadcast::Sender<()>>>,
     /// App handle for emitting events (set during setup)
     pub app_handle: Mutex<Option<tauri::AppHandle>>,
+    /// Application configuration (loaded from disk).
+    pub config: Mutex<Config>,
+    /// Host password (set by user).
+    pub host_password: Mutex<Option<String>>,
+    /// Client password (for connecting).
+    pub client_password: Mutex<Option<String>>,
 }
 
 impl AppState {
@@ -23,6 +30,9 @@ impl AppState {
             client: Mutex::new(None),
             host_shutdown: Mutex::new(None),
             app_handle: Mutex::new(None),
+            config: Mutex::new(Config::default()),
+            host_password: Mutex::new(None),
+            client_password: Mutex::new(None),
         }
     }
 }

@@ -28,48 +28,78 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  max-height: 100vh;
 }
+
+/* ── Header ────────────────────────────── */
 
 .app-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 24px;
+  padding: 10px 20px;
   background-color: var(--bg-secondary);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
 .app-header h1 {
-  font-size: 1.4rem;
+  font-size: 1.3rem;
   font-weight: 600;
   color: var(--accent);
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .version {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   color: var(--text-secondary);
   font-family: monospace;
+}
+
+.icon-btn {
+  width: auto;
+  padding: 4px 10px;
+  font-size: 1rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.icon-btn:hover {
+  background: var(--bg-card);
+}
+
+.icon-btn.active {
+  background: var(--success);
+  border-color: var(--success);
 }
 
 .main-content {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  padding: 16px;
+  gap: 10px;
+  padding: 12px;
   flex: 1;
-  overflow: hidden;
+  overflow: auto;
 }
 
 /* ── Cards ────────────────────────────── */
 
 .card {
   flex: 1;
-  min-width: 260px;
-  max-width: 420px;
+  min-width: 240px;
+  max-width: 400px;
   background-color: var(--bg-card);
   border-radius: 8px;
-  padding: 16px;
+  padding: 14px;
   border: 1px solid var(--border);
 }
 
@@ -79,8 +109,8 @@ body {
 }
 
 .card h2 {
-  font-size: 1rem;
-  margin-bottom: 10px;
+  font-size: 0.95rem;
+  margin-bottom: 8px;
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -90,7 +120,7 @@ body {
 
 .mode-selector {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   flex: 1;
 }
 
@@ -98,32 +128,32 @@ body {
 
 label {
   display: block;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: var(--text-secondary);
-  margin: 8px 0 4px;
+  margin: 6px 0 3px;
 }
 
 input,
 select {
   width: 100%;
-  padding: 8px 10px;
-  border-radius: 6px;
+  padding: 7px 9px;
+  border-radius: 5px;
   border: 1px solid var(--border);
   background-color: var(--bg-secondary);
   color: var(--text-primary);
-  font-size: 0.9rem;
+  font-size: 0.85rem;
 }
 
 button {
   background-color: var(--accent);
   color: white;
   border: none;
-  border-radius: 6px;
-  padding: 8px 16px;
-  font-size: 0.85rem;
+  border-radius: 5px;
+  padding: 7px 14px;
+  font-size: 0.8rem;
   cursor: pointer;
   transition: background-color 0.15s;
-  margin-top: 8px;
+  margin-top: 6px;
   width: 100%;
 }
 
@@ -145,32 +175,58 @@ button.danger {
   background-color: var(--danger);
 }
 
-/* ── Client view ──────────────────────── */
+/* ── Client workspace ─────────────────── */
 
-.client-view {
+.client-workspace {
   flex: 1;
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  min-height: 400px;
+}
+
+.client-main {
+  flex: 3;
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
 
+.client-sidepanels {
+  flex: 1;
+  min-width: 260px;
+  max-width: 350px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+/* ── Client toolbar ───────────────────── */
+
 .client-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 16px;
+  padding: 8px 14px;
   background-color: var(--bg-secondary);
   border-radius: 8px 8px 0 0;
   border: 1px solid var(--border);
   border-bottom: none;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
 }
 
-.client-toolbar button {
+.toolbar-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.toolbar-actions button {
   width: auto;
   margin: 0;
-  padding: 6px 14px;
-  font-size: 0.8rem;
+  padding: 5px 10px;
+  font-size: 0.75rem;
 }
 
 /* ── Remote Screen ────────────────────── */
@@ -190,7 +246,7 @@ button.danger {
 
 .remote-placeholder {
   color: var(--text-secondary);
-  font-size: 1rem;
+  font-size: 0.9rem;
   text-align: center;
 }
 
@@ -205,13 +261,41 @@ button.danger {
   display: none;
 }
 
+/* ── Display selector (multi-monitor) ─── */
+
+.display-selector {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  z-index: 10;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 6px;
+  padding: 4px;
+}
+
+.display-btn {
+  width: auto;
+  margin: 0;
+  padding: 4px 10px;
+  font-size: 0.7rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+}
+
+.display-btn:hover {
+  background: var(--accent);
+}
+
 /* ── Log panel ────────────────────────── */
 
 .log-panel {
   flex: 2;
-  min-width: 300px;
+  min-width: 280px;
   max-width: 100%;
-  max-height: 250px;
+  max-height: 200px;
   display: flex;
   flex-direction: column;
 }
@@ -220,22 +304,412 @@ button.danger {
   flex: 1;
   overflow-y: auto;
   font-family: "Cascadia Code", "Fira Code", monospace;
-  font-size: 0.72rem;
-  line-height: 1.6;
+  font-size: 0.68rem;
+  line-height: 1.5;
 }
 
 .log-entry {
-  padding: 2px 0;
+  padding: 1px 0;
   color: var(--text-secondary);
   border-bottom: 1px solid rgba(42, 42, 74, 0.25);
   word-break: break-all;
+}
+
+/* ── Chat Panel ───────────────────────── */
+
+.chat-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  max-height: 250px;
+  min-height: 150px;
+}
+
+.chat-header {
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  border-radius: 8px 8px 0 0;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-empty {
+  color: var(--text-secondary);
+  text-align: center;
+  margin: auto;
+  font-style: italic;
+}
+
+.chat-message {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  max-width: 90%;
+}
+
+.chat-message-mine {
+  align-self: flex-end;
+  background: var(--accent);
+  color: white;
+}
+
+.chat-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.65rem;
+  opacity: 0.7;
+  margin-bottom: 2px;
+}
+
+.chat-text {
+  word-break: break-word;
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.chat-input {
+  flex: 1;
+  padding: 5px 8px;
+  font-size: 0.75rem;
+  margin: 0;
+}
+
+.chat-send-btn {
+  width: auto;
+  padding: 5px 10px;
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+/* ── File Transfer Panel ──────────────── */
+
+.file-transfer-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  max-height: 300px;
+  min-height: 180px;
+}
+
+.ft-header {
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  border-radius: 8px 8px 0 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ft-browse-btn {
+  width: auto;
+  margin: 0;
+  padding: 3px 8px;
+  font-size: 0.7rem;
+}
+
+.ft-loading {
+  padding: 10px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.ft-path-bar {
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.7rem;
+  align-items: center;
+}
+
+.ft-path-bar button {
+  width: auto;
+  margin: 0;
+  padding: 2px 6px;
+  font-size: 0.7rem;
+}
+
+.ft-path {
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ft-entries {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.ft-empty {
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 20px;
+  font-style: italic;
+  font-size: 0.75rem;
+}
+
+.ft-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+
+.ft-entry:hover {
+  background: var(--bg-secondary);
+}
+
+.ft-entry-icon {
+  font-size: 0.9rem;
+}
+
+.ft-entry-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ft-entry-size {
+  color: var(--text-secondary);
+  font-size: 0.65rem;
+}
+
+.ft-progress {
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+}
+
+.ft-progress-info {
+  display: flex;
+  gap: 8px;
+  font-size: 0.68rem;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.ft-done {
+  color: var(--success);
+}
+
+.ft-error {
+  color: var(--danger);
+}
+
+.ft-progress-bar {
+  height: 4px;
+  background: var(--bg-secondary);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.ft-progress-fill {
+  height: 100%;
+  background: var(--success);
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+.ft-progress button {
+  margin: 0;
+  padding: 2px 8px;
+  font-size: 0.65rem;
+  width: auto;
+}
+
+.ft-upload {
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  font-size: 0.7rem;
+}
+
+.ft-upload-label {
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.ft-upload input[type="file"] {
+  display: block;
+  margin-top: 3px;
+}
+
+.ft-upload button {
+  margin-top: 4px;
+  width: auto;
+  padding: 4px 10px;
+  font-size: 0.7rem;
+}
+
+/* ── Settings Modal ───────────────────── */
+
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.settings-modal {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: 90vw;
+  max-width: 500px;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.settings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-header h2 {
+  font-size: 1rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.close-btn {
+  width: auto;
+  margin: 0;
+  padding: 4px 8px;
+  font-size: 0.9rem;
+  background: transparent;
+  border: 1px solid var(--border);
+}
+
+.settings-body {
+  padding: 12px 16px;
+}
+
+.settings-section {
+  margin-bottom: 14px;
+}
+
+.settings-section h3 {
+  font-size: 0.85rem;
+  margin-bottom: 6px;
+  color: var(--accent);
+}
+
+.settings-footer {
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.saved-badge {
+  color: var(--success);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.settings-footer button {
+  width: auto;
+  margin: 0;
+}
+
+/* ── Auth Dialog ──────────────────────── */
+
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.auth-modal {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 24px;
+  width: 90vw;
+  max-width: 360px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.auth-modal h3 {
+  font-size: 1rem;
+  margin-bottom: 6px;
+}
+
+.auth-input-row {
+  display: flex;
+  gap: 4px;
+  margin: 12px 0;
+}
+
+.auth-input-row input {
+  flex: 1;
+}
+
+.toggle-pwd {
+  width: auto;
+  margin: 0;
+  padding: 7px 10px;
+  background: var(--bg-secondary);
+}
+
+.auth-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.auth-buttons button {
+  width: auto;
+  margin: 0;
 }
 
 /* ── Hint text ────────────────────────── */
 
 .hint {
   color: var(--text-secondary);
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   font-style: italic;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }

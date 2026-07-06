@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// Main configuration for the RemoteDesk application
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,6 +22,62 @@ impl Default for Config {
             video: VideoConfig::default(),
             security: SecurityConfig::default(),
         }
+    }
+}
+
+impl Config {
+    /// Compute the config directory for the current platform.
+    pub fn config_dir() -> PathBuf {
+        dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("RemoteDesk")
+    }
+
+    /// Full path to config.toml.
+    pub fn config_path() -> PathBuf {
+        Self::config_dir().join("config.toml")
+    }
+
+    /// Load config from the standard location. Returns default if no config exists.
+    pub fn load() -> Self {
+        let path = Self::config_path();
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => {
+                toml::from_str(&contents).unwrap_or_else(|e| {
+                    tracing::warn!("Failed to parse config at {:?}: {}. Using defaults.", path, e);
+                    Config::default()
+                })
+            }
+            Err(_) => {
+                tracing::info!("No config found at {:?}, using defaults.", path);
+                Config::default()
+            }
+        }
+    }
+
+    /// Save config to the standard location. Creates directories if needed.
+    pub fn save(&self) -> Result<(), String> {
+        let dir = Self::config_dir();
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create config dir: {}", e))?;
+
+        let path = Self::config_path();
+        let contents = toml::to_string_pretty(self).map_err(|e| format!("TOML serialize error: {}", e))?;
+
+        std::fs::write(&path, contents).map_err(|e| format!("Cannot write config: {}", e))?;
+
+        tracing::info!("Config saved to {:?}", path);
+        Ok(())
+    }
+
+    /// Generate a new random peer ID.
+    pub fn generate_id(&mut self) {
+        use rand::Rng;
+        let id: String = rand::rng()
+            .sample_iter(&rand::distr::Alphanumeric)
+            .take(12)
+            .map(char::from)
+            .collect();
+        self.id = format!("rd-{}", id);
     }
 }
 

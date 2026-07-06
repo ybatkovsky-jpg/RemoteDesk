@@ -4,6 +4,8 @@
 //!
 //! Phase 2: E2E encryption via NaCl/libsodium.
 //! After crypto handshake, all messages are wrapped in `NetworkMessage::Encrypted`.
+//!
+//! Phase 3: Authentication, chat, file transfer, audio, settings.
 
 use codec::CompressedFrame;
 use codec::CompressionType;
@@ -12,6 +14,16 @@ use serde::{Deserialize, Serialize};
 
 /// Size of a Curve25519 public key.
 pub const PUBLIC_KEY_BYTES: usize = 32;
+
+/// Directory entry for file listing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileEntry {
+    pub name: String,
+    pub path: String,
+    pub size: u64,
+    pub is_dir: bool,
+    pub modified: u64, // Unix timestamp
+}
 
 /// Messages exchanged between host and client
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +52,12 @@ pub enum NetworkMessage {
     /// Contains [nonce (24 bytes) || ciphertext_with_mac]
     Encrypted(Vec<u8>),
 
+    // ── Authentication (Phase 3) ─────────────────────────
+    /// Client → Host: authenticate with password.
+    LoginRequest { password: String },
+    /// Host → Client: authentication result.
+    LoginResponse { success: bool, message: String },
+
     /// Host → Client: compressed video frame
     VideoFrame(CompressedFrame),
 
@@ -51,15 +69,25 @@ pub enum NetworkMessage {
     /// Client → Host: request to change quality/resolution
     UpdateSettings { max_fps: u32, quality: u32 },
 
-    // ── Multi-monitor / display control (Phase 2) ────────
+    // ── Multi-monitor / display control (Phase 2/3) ─────
     /// Client → Host: switch to a different display.
     SwitchDisplay { display_id: usize },
+    /// Host → Client: list of available displays.
+    DisplayList(Vec<rd_common::proto::DisplayInfo>),
 
     // ── Clipboard (Phase 2) ──────────────────────────────
     /// Either direction: clipboard content.
     ClipboardText { content: String },
 
-    // ── File transfer (Phase 2) ──────────────────────────
+    // ── Chat (Phase 3) ───────────────────────────────────
+    /// Either direction: chat message.
+    ChatMessage { text: String, sender: String, timestamp: u64 },
+
+    // ── File transfer (Phase 2/3) ────────────────────────
+    /// Client → Host: request directory listing.
+    FileListRequest { path: String },
+    /// Host → Client: directory listing response.
+    FileListResponse { path: String, entries: Vec<FileEntry> },
     /// Client → Host: request a file from the host.
     FileRequest { path: String },
     /// Host → Client: start of a file transfer.
@@ -70,8 +98,18 @@ pub enum NetworkMessage {
     FileEnd { path: String },
     /// Either direction: cancel a transfer.
     FileCancel { reason: String },
+    /// Client → Host: send a file to the host.
+    FileSendOffer { path: String, size: u64 },
+    /// Host → Client: accept incoming file.
+    FileSendAccept { path: String },
+    /// Host → Client: reject incoming file.
+    FileSendReject { path: String, reason: String },
+    /// Client → Host: file data chunk (client-to-host direction).
+    FileSendChunk { path: String, chunk_index: u32, data: Vec<u8> },
+    /// Client → Host: file send complete.
+    FileSendEnd { path: String },
 
-    // ── Audio (Phase 2, stub) ────────────────────────────
+    // ── Audio (Phase 3, stub) ────────────────────────────
     /// Host → Client: audio frame (compressed with Opus).
     AudioFrame { data: Vec<u8>, timestamp: u64 },
     /// Client → Host: request audio start/stop.

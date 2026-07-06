@@ -3565,6 +3565,7 @@ dependencies = [
  "bincode",
  "codec",
  "crypto",
+ "dirs-next",
  "input-sim",
  "rd-common",
  "screen-capture",
@@ -4687,12 +4688,15 @@ name = "rd-common"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dirs",
  "hbb_common",
  "protobuf",
+ "rand 0.9.4",
  "serde",
  "serde_json",
  "sha2",
  "thiserror 2.0.18",
+ "toml 0.9.12+spec-1.1.0",
  "tracing",
  "uuid",
 ]

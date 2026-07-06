@@ -9,6 +9,6 @@ pub mod client;
 pub mod udp;
 
 pub use host::HostSession;
-pub use client::ClientSession;
-pub use protocol::NetworkMessage;
+pub use client::{ChatEntry, ClientSession, ConnectionState, FileTransferProgress};
+pub use protocol::{FileEntry, NetworkMessage};
 pub use udp::UdpTransport;

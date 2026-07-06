@@ -1,8 +1,9 @@
 use crate::state::{AppState, AppStatus};
+use rd_common::config::Config;
 use rd_common::proto::{DisplayInfo, KeyEvent, MouseEvent};
 use network::client::ClientSession;
 use network::host::HostSession;
-use screen_capture;
+use network::{ChatEntry, FileEntry, FileTransferProgress};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
@@ -16,7 +17,6 @@ pub fn get_version() -> String {
 #[tauri::command]
 pub async fn get_app_status(state: State<'_, AppState>) -> Result<AppStatus, String> {
     let has_host = state.host.lock().await.is_some();
-    let _has_client = state.client.lock().await.is_some();
 
     let (mode, conn_state, w, h) = if has_host {
         ("host".into(), "listening".into(), 0u32, 0u32)
@@ -44,11 +44,58 @@ pub async fn get_app_status(state: State<'_, AppState>) -> Result<AppStatus, Str
     })
 }
 
+// ── Config / Settings ───────────────────────────────────
+
+#[tauri::command]
+pub async fn load_config(state: State<'_, AppState>) -> Result<Config, String> {
+    let config = Config::load();
+    *state.config.lock().await = config.clone();
+    Ok(config)
+}
+
+#[tauri::command]
+pub async fn save_config(state: State<'_, AppState>, config: Config) -> Result<(), String> {
+    config.save()?;
+    *state.config.lock().await = config;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_config(state: State<'_, AppState>) -> Result<Config, String> {
+    Ok(state.config.lock().await.clone())
+}
+
+// ── Password / Auth ─────────────────────────────────────
+
+#[tauri::command]
+pub async fn set_host_password(state: State<'_, AppState>, password: String) -> Result<(), String> {
+    *state.host_password.lock().await = Some(password);
+    // Also persist to config
+    let mut config = state.config.lock().await.clone();
+    config.security.password = Some(state.host_password.lock().await.clone().unwrap());
+    config.save()?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_client_password(state: State<'_, AppState>, password: String) -> Result<(), String> {
+    *state.client_password.lock().await = Some(password);
+    Ok(())
+}
+
 // ── Displays ────────────────────────────────────────────
 
 #[tauri::command]
 pub fn list_displays() -> Result<Vec<DisplayInfo>, String> {
     screen_capture::list_displays().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_host_displays(state: State<'_, AppState>) -> Result<Vec<DisplayInfo>, String> {
+    match state.client.lock().await.as_ref() {
+        Some(client) => Ok(client.host_displays().await),
+        None => Err("Not connected".into()),
+    }
 }
 
 // ── Host commands ───────────────────────────────────────
@@ -63,12 +110,18 @@ pub async fn start_host(
 ) -> Result<(), String> {
     tracing::info!("Starting host on port {} (display {}, {} fps)", port, display_id, fps);
 
-    let host = Arc::new(tokio::sync::Mutex::new(HostSession::new(port)));
+    let mut host = HostSession::new(port);
 
-    // Store handle so stop_host can access it.
+    // Apply password if set
+    let pwd = state.host_password.lock().await.clone();
+    if let Some(p) = pwd {
+        host.set_password(p);
+    }
+
+    let host = Arc::new(tokio::sync::Mutex::new(host));
+
     *state.host.lock().await = Some(host.clone());
 
-    // Spawn the host in background — clone Arc into the task.
     let app_clone = app.clone();
     tokio::spawn(async move {
         let result = {
@@ -117,14 +170,12 @@ pub async fn client_connect(
     tracing::info!("Connecting to host at {}", addr);
 
     let client = Arc::new(ClientSession::new(addr.clone()));
-
-    // Store for later use
     *state.client.lock().await = Some(client.clone());
 
-    // Spawn connection in background
+    let password = state.client_password.lock().await.clone();
     let app_clone = app.clone();
     tokio::spawn(async move {
-        match client.connect().await {
+        match client.connect_with_password(password.as_deref()).await {
             Ok(_) => {
                 let _ = app_clone.emit(
                     "connection-state",
@@ -169,7 +220,6 @@ pub async fn client_get_frame(state: State<'_, AppState>) -> Result<Option<Strin
     }
 }
 
-/// Return raw BGRA bytes — frontend receives as ArrayBuffer (no base64 overhead).
 #[tauri::command]
 pub async fn client_get_frame_raw(state: State<'_, AppState>) -> Result<Option<Vec<u8>>, String> {
     match state.client.lock().await.as_ref() {
@@ -217,6 +267,138 @@ pub async fn send_mouse_event(
 ) -> Result<(), String> {
     match state.client.lock().await.as_ref() {
         Some(client) => client.send_mouse_event(event).await.map_err(|e| e.to_string()),
+        None => Err("Not connected".into()),
+    }
+}
+
+// ── Multi-monitor ───────────────────────────────────────
+
+#[tauri::command]
+pub async fn switch_display(
+    state: State<'_, AppState>,
+    display_id: usize,
+) -> Result<(), String> {
+    match state.client.lock().await.as_ref() {
+        Some(client) => client.switch_display(display_id).await.map_err(|e| e.to_string()),
+        None => Err("Not connected".into()),
+    }
+}
+
+// ── Chat ────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn send_chat_message(
+    state: State<'_, AppState>,
+    text: String,
+    sender: String,
+) -> Result<(), String> {
+    match state.client.lock().await.as_ref() {
+        Some(client) => client.send_chat_message(&text, &sender).await.map_err(|e| e.to_string()),
+        None => Err("Not connected".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn get_chat_history(state: State<'_, AppState>) -> Result<Vec<ChatEntry>, String> {
+    match state.client.lock().await.as_ref() {
+        Some(client) => Ok(client.chat_history().await),
+        None => Err("Not connected".into()),
+    }
+}
+
+// ── File Transfer ───────────────────────────────────────
+
+#[tauri::command]
+pub async fn request_file_list(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Vec<FileEntry>, String> {
+    match state.client.lock().await.as_ref() {
+        Some(client) => {
+            client.request_file_list(&path).await.map_err(|e| e.to_string())?;
+            // Poll for response (simple approach — wait up to 2 seconds).
+            for _ in 0..20 {
+                if let Some(listing) = client.file_listing().await {
+                    return Ok(listing);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            Err("Timeout waiting for file listing".into())
+        }
+        None => Err("Not connected".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn request_file(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<(), String> {
+    match state.client.lock().await.as_ref() {
+        Some(client) => client.request_file(&path).await.map_err(|e| e.to_string()),
+        None => Err("Not connected".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn get_file_progress(
+    state: State<'_, AppState>,
+) -> Result<Option<FileTransferProgress>, String> {
+    match state.client.lock().await.as_ref() {
+        Some(client) => Ok(client.file_progress().await),
+        None => Err("Not connected".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn cancel_file_transfer(
+    state: State<'_, AppState>,
+    reason: String,
+) -> Result<(), String> {
+    match state.client.lock().await.as_ref() {
+        Some(client) => client.cancel_file_transfer(&reason).await.map_err(|e| e.to_string()),
+        None => Err("Not connected".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn send_file_to_host(
+    state: State<'_, AppState>,
+    path: String,
+    data: Vec<u8>,
+) -> Result<(), String> {
+    let client = match state.client.lock().await.as_ref() {
+        Some(c) => c.clone(),
+        None => return Err("Not connected".into()),
+    };
+
+    let size = data.len() as u64;
+    let chunk_size = 65536usize; // 64KB
+    let _total_chunks = data.len().div_ceil(chunk_size) as u32;
+
+    client.send_file_offer(&path, size).await.map_err(|e| e.to_string())?;
+
+    for (i, chunk) in data.chunks(chunk_size).enumerate() {
+        client
+            .send_file_chunk(&path, i as u32, chunk.to_vec())
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    client.send_file_end(&path).await.map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+// ── Audio ───────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn toggle_audio(
+    state: State<'_, AppState>,
+    enable: bool,
+) -> Result<(), String> {
+    match state.client.lock().await.as_ref() {
+        Some(client) => client.send_audio_control(enable).await.map_err(|e| e.to_string()),
         None => Err("Not connected".into()),
     }
 }

@@ -1,4 +1,4 @@
-import { createSignal, onMount } from "solid-js";
+import { createSignal, onMount, Show } from "solid-js";
 import {
   getVersion,
   listDisplays,
@@ -8,9 +8,18 @@ import {
   clientDisconnect,
   onHostStatus,
   onConnectionState,
+  setHostPassword,
+  setClientPassword,
+  switchDisplay,
+  toggleAudio,
+  loadConfig,
   type DisplayInfo,
 } from "./lib/tauri";
 import RemoteScreen from "./components/RemoteScreen";
+import SettingsPanel from "./components/SettingsPanel";
+import ChatPanel from "./components/ChatPanel";
+import FileTransferPanel from "./components/FileTransferPanel";
+import AuthDialog from "./components/AuthDialog";
 import "./App.css";
 
 type Mode = "idle" | "host" | "client";
@@ -26,9 +35,13 @@ function App() {
   const [clientAddr, setClientAddr] = createSignal("127.0.0.1:9000");
   const [connectionState, setConnectionState] = createSignal("disconnected");
   const [logs, setLogs] = createSignal<string[]>([]);
+  const [showSettings, setShowSettings] = createSignal(false);
+  const [showAuth, setShowAuth] = createSignal<"host" | "client" | null>(null);
+  const [showSidepanels, setShowSidepanels] = createSignal(true);
+  const [audioEnabled, setAudioEnabled] = createSignal(false);
 
   const addLog = (msg: string) => {
-    setLogs((prev) => [...prev.slice(-50), `[${new Date().toLocaleTimeString()}] ${msg}`]);
+    setLogs((prev) => [...prev.slice(-100), `[${new Date().toLocaleTimeString()}] ${msg}`]);
   };
 
   onMount(async () => {
@@ -36,6 +49,12 @@ function App() {
       const v = await getVersion();
       setVersion(v);
       addLog(`RemoteDesk ${v} started`);
+
+      // Load saved config
+      const cfg = await loadConfig();
+      if (cfg.security.password) {
+        addLog("Config loaded with password protection");
+      }
     } catch (e) {
       addLog(`Error: ${e}`);
     }
@@ -62,7 +81,17 @@ function App() {
   };
 
   const handleStartHost = async () => {
+    addLog("Opening host auth...");
+    setShowAuth("host");
+  };
+
+  const doStartHost = async (password: string) => {
+    setShowAuth(null);
     try {
+      if (password) {
+        await setHostPassword(password);
+        addLog("Host password set");
+      }
       setMode("host");
       await startHost(selectedDisplay(), hostPort(), hostFps());
       addLog(`Host started on port ${hostPort()}`);
@@ -84,7 +113,16 @@ function App() {
   };
 
   const handleConnect = async () => {
+    addLog("Opening client auth...");
+    setShowAuth("client");
+  };
+
+  const doConnect = async (password: string) => {
+    setShowAuth(null);
     try {
+      if (password) {
+        await setClientPassword(password);
+      }
       setMode("client");
       await clientConnect(clientAddr());
       addLog(`Connecting to ${clientAddr()}...`);
@@ -105,13 +143,58 @@ function App() {
     }
   };
 
+  const handleSwitchDisplay = async (displayId: number) => {
+    try {
+      await switchDisplay(displayId);
+      addLog(`Switched to display ${displayId}`);
+    } catch (e) {
+      addLog(`Switch display error: ${e}`);
+    }
+  };
+
+  const handleToggleAudio = async () => {
+    try {
+      const newState = !audioEnabled();
+      await toggleAudio(newState);
+      setAudioEnabled(newState);
+      addLog(`Audio ${newState ? "enabled" : "disabled"}`);
+    } catch (e) {
+      addLog(`Audio toggle error: ${e}`);
+    }
+  };
+
   const isConnected = () => mode() === "client" && connectionState() === "connected";
 
   return (
     <div class="app-container">
+      {/* Auth dialog */}
+      <Show when={showAuth()}>
+        <AuthDialog
+          mode={showAuth()!}
+          onConfirm={(pwd) => {
+            if (showAuth() === "host") doStartHost(pwd);
+            else doConnect(pwd);
+          }}
+          onCancel={() => {
+            setShowAuth(null);
+            if (showAuth() === "client") setMode("idle");
+          }}
+        />
+      </Show>
+
+      {/* Settings modal */}
+      <Show when={showSettings()}>
+        <SettingsPanel onClose={() => setShowSettings(false)} />
+      </Show>
+
       <header class="app-header">
         <h1>RemoteDesk</h1>
-        <span class="version">{version()}</span>
+        <div class="header-right">
+          <span class="version">{version()}</span>
+          <button class="icon-btn" onClick={() => setShowSettings(true)} title="Settings">
+            ⚙️
+          </button>
+        </div>
       </header>
 
       <main class="main-content">
@@ -128,6 +211,7 @@ function App() {
                 value={selectedDisplay()}
                 onChange={(e) => setSelectedDisplay(Number(e.target.value))}
               >
+                {displays().length === 0 && <option value={0}>No displays found</option>}
                 {displays().map((d) => (
                   <option value={d.id}>
                     {d.name} ({d.width}x{d.height})
@@ -184,11 +268,10 @@ function App() {
           <section class="card full-width">
             <h2>🎥 Host Running</h2>
             <p>
-              Status: <strong>{hostStatus()}</strong> | Port: {hostPort()}
+              Status: <strong>{hostStatus()}</strong> | Port: {hostPort()} | Display: {selectedDisplay()}
             </p>
             <p class="hint">
-              Waiting for client connections... Share your IP:{hostPort()} with the
-              client.
+              Waiting for client connections... Share your IP:{hostPort()} with the client.
             </p>
             <button onClick={handleStopHost} class="danger">
               ⏹ Stop Host
@@ -198,16 +281,45 @@ function App() {
 
         {/* Client connected */}
         {mode() === "client" && (
-          <div class="client-view">
-            <div class="client-toolbar">
-              <span>
-                Connected to: <strong>{clientAddr()}</strong> — {connectionState()}
-              </span>
-              <button onClick={handleDisconnect} class="danger">
-                Disconnect
-              </button>
+          <div class="client-workspace">
+            <div class="client-main">
+              <div class="client-toolbar">
+                <span>
+                  Connected to: <strong>{clientAddr()}</strong> — {connectionState()}
+                </span>
+                <div class="toolbar-actions">
+                  <button
+                    class={`icon-btn ${audioEnabled() ? "active" : ""}`}
+                    onClick={handleToggleAudio}
+                    title="Toggle Audio"
+                  >
+                    {audioEnabled() ? "🔊" : "🔇"}
+                  </button>
+                  <button
+                    class="icon-btn"
+                    onClick={() => setShowSidepanels(!showSidepanels())}
+                    title="Toggle panels"
+                  >
+                    {showSidepanels() ? "📋" : "📋"}
+                  </button>
+                  <button onClick={handleDisconnect} class="danger">
+                    Disconnect
+                  </button>
+                </div>
+              </div>
+              <RemoteScreen
+                connected={isConnected()}
+                onDisplaySwitch={handleSwitchDisplay}
+              />
             </div>
-            <RemoteScreen connected={isConnected()} />
+
+            {/* Side panels */}
+            {showSidepanels() && (
+              <div class="client-sidepanels">
+                <ChatPanel connected={isConnected()} />
+                <FileTransferPanel connected={isConnected()} />
+              </div>
+            )}
           </div>
         )}
 
