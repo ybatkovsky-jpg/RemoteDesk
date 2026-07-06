@@ -2,7 +2,7 @@
 
 Кроссплатформенное приложение удаленного доступа с шифрованием, передачей файлов, чатом и мульти-мониторной поддержкой.
 
-**Статус:** Фазы 0+1+2+3+4 завершены ✅ · `cargo check` 0 ошибок · `cargo test` 10/10
+**Статус:** Фазы 0-5 завершены ✅ · `cargo check` 0 ошибок · `cargo test` 10/10
 
 <p align="center">
   <img src="https://img.shields.io/badge/rust-stable-orange?logo=rust" />
@@ -31,6 +31,7 @@
 | 🌐 NAT traversal / UDP hole punching | ✅ |
 | 🔄 Relay-сервер (TCP fallback) | ✅ |
 | 📦 Инсталляторы (NSIS/WiX/DMG/DEB) + CI release | ✅ |
+| 📱 Android (Tauri mobile, MediaProjection, JNI) | ✅ |
 
 ## Архитектура
 
