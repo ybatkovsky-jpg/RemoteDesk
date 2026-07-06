@@ -170,11 +170,19 @@ export async function clientDisconnect(): Promise<void> {
   return invoke("client_disconnect");
 }
 
+export async function clientConnectById(peerId: string): Promise<void> {
+  return invoke("client_connect_by_id", { peerId });
+}
+
+export async function getPeerId(): Promise<string> {
+  return invoke("get_peer_id");
+}
+
 export async function clientGetFrame(): Promise<string | null> {
   return invoke("client_get_frame");
 }
 
-export async function clientGetFrameRaw(): Promise<Uint8Array | null> {
+export async function clientGetFrameRaw(): Promise<string | null> {
   return invoke("client_get_frame_raw");
 }
 

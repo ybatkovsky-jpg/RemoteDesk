@@ -31,19 +31,25 @@ export default function RemoteScreen(props: RemoteScreenProps) {
           }
         }
 
-        // Get latest frame as raw ArrayBuffer
-        const bytes = await clientGetFrameRaw();
-        if (bytes && canvasRef) {
+        // Get latest frame as base64-encoded BGRA
+        const b64 = await clientGetFrameRaw();
+        if (b64 && canvasRef) {
           const ctx = canvasRef.getContext("2d");
           if (!ctx) return;
 
           const size = frameSize();
           if (!size) return;
 
+          // Decode base64 to raw bytes
+          const binaryStr = atob(b64);
+          const rawBytes = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) {
+            rawBytes[i] = binaryStr.charCodeAt(i);
+          }
           const clamped = new Uint8ClampedArray(
-            bytes.buffer as unknown as ArrayBuffer,
-            bytes.byteOffset,
-            bytes.byteLength
+            rawBytes.buffer,
+            rawBytes.byteOffset,
+            rawBytes.byteLength
           );
           const imgData = new ImageData(clamped, size.w, size.h);
 

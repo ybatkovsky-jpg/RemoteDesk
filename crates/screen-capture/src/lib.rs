@@ -1,6 +1,6 @@
 //! Cross-platform screen capture.
 //!
-//! With `native` feature: uses RustDesk's `scrap` crate (DXGI/ScreenCaptureKit/PipeWire).
+//! With `native` feature on Windows: uses GDI (`BitBlt` + `GetDIBits`) for capture.
 //! Without `native`: stub implementation for development.
 
 use rd_common::proto::DisplayInfo;
@@ -17,110 +17,127 @@ pub struct Frame {
     pub timestamp: u64,
 }
 
-/// Screen capturer — real when `native` feature is enabled
-#[cfg(all(feature = "native", not(target_os = "android")))]
-pub struct Capturer {
-    inner: scrap::Capturer,
-    display: scrap::Display,
-    display_id: usize,
-    width: u32,
-    height: u32,
-}
+// ── Windows native (GDI) ────────────────────────────────────
 
-/// Android capturer using MediaCodec/MediaProjection via scrap
-#[cfg(target_os = "android")]
-pub struct Capturer {
-    display_id: usize,
-    width: u32,
-    height: u32,
-    /// On Android, scrap's Capturer uses JNI to receive frames from Java.
-    inner: scrap::Capturer,
-}
+#[cfg(all(target_os = "windows", feature = "native"))]
+mod win {
+    use super::*;
+    use rd_common::Error;
+    use std::mem;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Gdi::{
+        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
+        GetDC, GetDIBits, ReleaseDC, SelectObject,
+        BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS,
+        HGDIOBJ, RGBQUAD, SRCCOPY,
+        GET_DEVICE_CAPS_INDEX, GetDeviceCaps,
+    };
 
-/// Stub capturer for dev builds
-#[cfg(not(any(feature = "native", target_os = "android")))]
-pub struct Capturer {
-    display_id: usize,
-    width: u32,
-    height: u32,
-}
-
-impl Capturer {
-    #[cfg(feature = "native")]
-    pub fn new(display_index: usize) -> Result<Self> {
-        let displays = scrap::Display::all().map_err(|e| {
-            Error::Capture(format!("Failed to enumerate displays: {}", e))
-        })?;
-
-        let display = displays.into_iter().nth(display_index).ok_or_else(|| {
-            Error::Capture(format!("Display index {} not found", display_index))
-        })?;
-
-        let width = display.width() as u32;
-        let height = display.height() as u32;
-
-        let inner = scrap::Capturer::new(display.clone()).map_err(|e| {
-            Error::Capture(format!("Failed to create capturer: {}", e))
-        })?;
-
-        Ok(Self {
-            inner,
-            display,
-            display_id: display_index,
-            width,
-            height,
-        })
+    pub struct Capturer {
+        display_id: usize,
+        display_name: String,
+        width: u32,
+        height: u32,
     }
 
-    #[cfg(target_os = "android")]
-    pub fn new(display_index: usize) -> Result<Self> {
-        // On Android, scrap uses MediaProjection — display is always the primary screen.
-        let displays = scrap::Display::all().map_err(|e| {
-            Error::Capture(format!("Failed to enumerate Android display: {}", e))
-        })?;
+    impl Capturer {
+        pub fn new(display_index: usize) -> Result<Self> {
+            let displays = list_displays_impl()?;
+            let info = displays
+                .into_iter()
+                .nth(display_index)
+                .ok_or_else(|| Error::Capture(format!("Display index {} not found", display_index)))?;
 
-        let display = displays.into_iter().next().ok_or_else(|| {
-            Error::Capture("No Android display found".into())
-        })?;
+            Ok(Self {
+                display_id: display_index,
+                display_name: info.name,
+                width: info.width,
+                height: info.height,
+            })
+        }
 
-        let width = display.width() as u32;
-        let height = display.height() as u32;
+        pub fn capture_frame(&mut self, _timeout_ms: u64) -> Result<Option<Frame>> {
+            unsafe {
+                let hwnd = HWND(std::ptr::null_mut());
+                let hdc_screen = GetDC(hwnd);
+                if hdc_screen.0.is_null() {
+                    return Err(Error::Capture("GetDC failed".into()));
+                }
 
-        let inner = scrap::Capturer::new(display).map_err(|e| {
-            Error::Capture(format!("Failed to create Android capturer: {}", e))
-        })?;
+                let hdc_mem = CreateCompatibleDC(hdc_screen);
+                if hdc_mem.0.is_null() {
+                    ReleaseDC(hwnd, hdc_screen);
+                    return Err(Error::Capture("CreateCompatibleDC failed".into()));
+                }
 
-        Ok(Self {
-            display_id: display_index,
-            width,
-            height,
-            inner,
-        })
-    }
+                let hbmp = CreateCompatibleBitmap(hdc_screen, self.width as i32, self.height as i32);
+                if hbmp.0.is_null() {
+                    let _ = DeleteDC(hdc_mem);
+                    let _ = ReleaseDC(hwnd, hdc_screen);
+                    return Err(Error::Capture("CreateCompatibleBitmap failed".into()));
+                }
 
-    #[cfg(not(feature = "native"))]
-    pub fn new(display_index: usize) -> Result<Self> {
-        Ok(Self {
-            display_id: display_index,
-            width: 1920,
-            height: 1080,
-        })
-    }
+                // Select bitmap into memory DC and copy from screen
+                let old_bmp = SelectObject(hdc_mem, HGDIOBJ(hbmp.0));
+                let _ = BitBlt(
+                    hdc_mem,
+                    0, 0,
+                    self.width as i32,
+                    self.height as i32,
+                    hdc_screen,
+                    0, 0,
+                    SRCCOPY,
+                );
 
-    #[cfg(feature = "native")]
-    pub fn capture_frame(&mut self, timeout_ms: u64) -> Result<Option<Frame>> {
-        let timeout = std::time::Duration::from_millis(timeout_ms);
+                // Get the bitmap bits as BGRA
+                let mut bmi = BITMAPINFO {
+                    bmiHeader: BITMAPINFOHEADER {
+                        biSize: mem::size_of::<BITMAPINFOHEADER>() as u32,
+                        biWidth: self.width as i32,
+                        biHeight: -(self.height as i32), // negative = top-down
+                        biPlanes: 1,
+                        biBitCount: 32,
+                        biCompression: 0, // BI_RGB
+                        biSizeImage: self.width * self.height * 4,
+                        biXPelsPerMeter: 0,
+                        biYPelsPerMeter: 0,
+                        biClrUsed: 0,
+                        biClrImportant: 0,
+                    },
+                    bmiColors: [RGBQUAD::default(); 1],
+                };
 
-        match self.inner.frame(timeout) {
-            Ok(frame) => {
-                let data = frame_to_bgra(&frame);
+                let buf_size = (self.width * self.height * 4) as usize;
+                let mut buf: Vec<u8> = vec![0u8; buf_size];
+
+                GetDIBits(
+                    hdc_mem,
+                    hbmp,
+                    0,
+                    self.height,
+                    Some(buf.as_mut_ptr() as *mut _),
+                    &mut bmi,
+                    DIB_RGB_COLORS,
+                );
+
+                // BGRA → RGBA: swap R and B channels
+                for pixel in buf.chunks_exact_mut(4) {
+                    pixel.swap(0, 2);
+                }
+
+                // Cleanup
+                SelectObject(hdc_mem, old_bmp);
+                let _ = DeleteObject(HGDIOBJ(hbmp.0));
+                let _ = DeleteDC(hdc_mem);
+                let _ = ReleaseDC(hwnd, hdc_screen);
+
                 let timestamp = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_millis() as u64;
 
                 Ok(Some(Frame {
-                    data,
+                    data: buf,
                     width: self.width,
                     height: self.height,
                     stride: self.width * 4,
@@ -128,127 +145,82 @@ impl Capturer {
                     timestamp,
                 }))
             }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
-            Err(e) => Err(Error::Capture(format!("Capture error: {}", e))),
         }
+
+        pub fn width(&self) -> u32 { self.width }
+        pub fn height(&self) -> u32 { self.height }
+        pub fn display_id(&self) -> usize { self.display_id }
+        pub fn display_name(&self) -> String { self.display_name.clone() }
     }
 
-    #[cfg(target_os = "android")]
-    pub fn capture_frame(&mut self, timeout_ms: u64) -> Result<Option<Frame>> {
-        let timeout = std::time::Duration::from_millis(timeout_ms);
+    pub fn list_displays_impl() -> Result<Vec<DisplayInfo>> {
+        unsafe {
+            let hwnd = HWND(std::ptr::null_mut());
+            let dc = GetDC(hwnd);
+            let w = GetDeviceCaps(dc, GET_DEVICE_CAPS_INDEX(118 /* HORZRES */)) as u32;
+            let h = GetDeviceCaps(dc, GET_DEVICE_CAPS_INDEX(117 /* VERTRES */)) as u32;
+            ReleaseDC(hwnd, dc);
 
-        match self.inner.frame(timeout) {
-            Ok(frame) => {
-                let data = frame_to_bgra_android(&frame);
-                let timestamp = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64;
-
-                Ok(Some(Frame {
-                    data,
-                    width: self.width,
-                    height: self.height,
-                    stride: self.width * 4,
-                    display_id: self.display_id,
-                    timestamp,
-                }))
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
-            Err(e) => Err(Error::Capture(format!("Android capture error: {}", e))),
-        }
-    }
-
-    #[cfg(not(feature = "native"))]
-    pub fn capture_frame(&mut self, _timeout_ms: u64) -> Result<Option<Frame>> {
-        Ok(None) // Stub: no frames
-    }
-
-    pub fn width(&self) -> u32 {
-        self.width
-    }
-
-    pub fn height(&self) -> u32 {
-        self.height
-    }
-
-    pub fn display_id(&self) -> usize {
-        self.display_id
-    }
-
-    #[cfg(feature = "native")]
-    pub fn display_name(&self) -> String {
-        self.display.name()
-    }
-
-    #[cfg(not(feature = "native"))]
-    pub fn display_name(&self) -> String {
-        "Stub Display".into()
-    }
-}
-
-#[cfg(feature = "native")]
-fn frame_to_bgra(frame: &scrap::Frame<'_>) -> Vec<u8> {
-    match frame {
-        scrap::Frame::PixelBuffer(pb) => pb.data().to_vec(),
-        scrap::Frame::Texture(_) => {
-            tracing::warn!("GPU texture frame cannot be read as BGRA without VRAM support");
-            vec![]
+            Ok(vec![DisplayInfo {
+                id: 0,
+                name: "Primary Display".into(),
+                width: w,
+                height: h,
+                is_primary: true,
+                dpi: 1.0,
+            }])
         }
     }
 }
 
-#[cfg(target_os = "android")]
-fn frame_to_bgra_android(frame: &scrap::Frame<'_>) -> Vec<u8> {
-    // On Android, frames arrive as PixelBuffer from MediaCodec.
-    match frame {
-        scrap::Frame::PixelBuffer(pb) => pb.data().to_vec(),
-        _ => vec![],
-    }
-}
-
-/// List all available displays
-#[cfg(feature = "native")]
-pub fn list_displays() -> Result<Vec<DisplayInfo>> {
-    let displays = scrap::Display::all().map_err(|e| {
-        Error::Capture(format!("Failed to enumerate displays: {}", e))
-    })?;
-
-    Ok(displays
-        .into_iter()
-        .enumerate()
-        .map(|(id, d)| DisplayInfo {
-            id,
-            name: d.name(),
-            width: d.width() as u32,
-            height: d.height() as u32,
-            is_primary: d.is_primary(),
-            dpi: 1.0,
-        })
-        .collect())
-}
-
-#[cfg(target_os = "android")]
-pub fn list_displays() -> Result<Vec<DisplayInfo>> {
-    // Android has a single primary display.
-    Ok(vec![DisplayInfo {
-        id: 0,
-        name: "Android Screen".into(),
-        width: 1080,
-        height: 1920,
-        is_primary: true,
-        dpi: 2.0,
-    }])
-}
+// ── Stub (non-native) ──────────────────────────────────────
 
 #[cfg(not(feature = "native"))]
+mod stub {
+    use super::*;
+
+    pub struct Capturer {
+        display_id: usize,
+        width: u32,
+        height: u32,
+    }
+
+    impl Capturer {
+        pub fn new(display_index: usize) -> Result<Self> {
+            Ok(Self { display_id: display_index, width: 1920, height: 1080 })
+        }
+
+        pub fn capture_frame(&mut self, _timeout_ms: u64) -> Result<Option<Frame>> {
+            Ok(None)
+        }
+
+        pub fn width(&self) -> u32 { self.width }
+        pub fn height(&self) -> u32 { self.height }
+        pub fn display_id(&self) -> usize { self.display_id }
+        pub fn display_name(&self) -> String { "Stub Display".into() }
+    }
+
+    pub fn list_displays_impl() -> Result<Vec<DisplayInfo>> {
+        Ok(vec![DisplayInfo {
+            id: 0, name: "Stub Display".into(),
+            width: 1920, height: 1080,
+            is_primary: true, dpi: 1.0,
+        }])
+    }
+}
+
+// ── Public re-exports ──────────────────────────────────────
+
+#[cfg(feature = "native")]
+pub use win::Capturer;
+
+#[cfg(not(feature = "native"))]
+pub use stub::Capturer;
+
+/// List all available displays
 pub fn list_displays() -> Result<Vec<DisplayInfo>> {
-    Ok(vec![DisplayInfo {
-        id: 0,
-        name: "Stub Display".into(),
-        width: 1920,
-        height: 1080,
-        is_primary: true,
-        dpi: 1.0,
-    }])
+    #[cfg(feature = "native")]
+    { win::list_displays_impl() }
+    #[cfg(not(feature = "native"))]
+    { stub::list_displays_impl() }
 }

@@ -28,7 +28,7 @@ base64 = "0.22"
 
 # Internal crates
 rd-common = { path = "../crates/rd-common" }
-screen-capture = { path = "../crates/screen-capture" }
+screen-capture = { path = "../crates/screen-capture", features = ["native"] }
 codec = { path = "../crates/codec" }
 input-sim = { path = "../crates/input-sim" }
 network = { path = "../crates/network" }

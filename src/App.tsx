@@ -5,7 +5,9 @@ import {
   startHost,
   stopHost,
   clientConnect,
+  clientConnectById,
   clientDisconnect,
+  getPeerId,
   onHostStatus,
   onConnectionState,
   setHostPassword,
@@ -39,6 +41,8 @@ function App() {
   const [showAuth, setShowAuth] = createSignal<"host" | "client" | null>(null);
   const [showSidepanels, setShowSidepanels] = createSignal(true);
   const [audioEnabled, setAudioEnabled] = createSignal(false);
+  const [peerId, setPeerId] = createSignal("");
+  const [connectById, setConnectById] = createSignal("");
 
   const addLog = (msg: string) => {
     setLogs((prev) => [...prev.slice(-100), `[${new Date().toLocaleTimeString()}] ${msg}`]);
@@ -54,6 +58,15 @@ function App() {
       const cfg = await loadConfig();
       if (cfg.security.password) {
         addLog("Config loaded with password protection");
+      }
+
+      // Load peer ID
+      try {
+        const id = await getPeerId();
+        setPeerId(id);
+        addLog(`Peer ID: ${id}`);
+      } catch {
+        addLog("Peer ID not available yet");
       }
     } catch (e) {
       addLog(`Error: ${e}`);
@@ -132,6 +145,37 @@ function App() {
     }
   };
 
+  const handleConnectById = async () => {
+    const id = connectById().trim();
+    if (!id) {
+      addLog("Please enter a peer ID");
+      return;
+    }
+    addLog("Opening client auth...");
+    setShowAuth("client");
+
+    // Store the ID for use after auth
+    (window as unknown as Record<string, unknown>).__pendingConnectId = id;
+  };
+
+  const doConnectById = async (password: string) => {
+    setShowAuth(null);
+    const id = (window as unknown as Record<string, unknown>).__pendingConnectId as string;
+    if (!id) return;
+
+    try {
+      if (password) {
+        await setClientPassword(password);
+      }
+      setMode("client");
+      await clientConnectById(id);
+      addLog(`Connecting to peer ${id} via relay...`);
+    } catch (e) {
+      addLog(`Connect error: ${e}`);
+      setMode("idle");
+    }
+  };
+
   const handleDisconnect = async () => {
     try {
       await clientDisconnect();
@@ -173,10 +217,15 @@ function App() {
           mode={showAuth()!}
           onConfirm={(pwd) => {
             if (showAuth() === "host") doStartHost(pwd);
-            else doConnect(pwd);
+            else if ((window as unknown as Record<string, unknown>).__pendingConnectId) {
+              doConnectById(pwd);
+            } else {
+              doConnect(pwd);
+            }
           }}
           onCancel={() => {
             setShowAuth(null);
+            (window as unknown as Record<string, unknown>).__pendingConnectId = undefined;
             if (showAuth() === "client") setMode("idle");
           }}
         />
@@ -190,6 +239,7 @@ function App() {
       <header class="app-header">
         <h1>RemoteDesk</h1>
         <div class="header-right">
+          {peerId() && <span class="peer-id" title="Your Peer ID">ID: {peerId()}</span>}
           <span class="version">{version()}</span>
           <button class="icon-btn" onClick={() => setShowSettings(true)} title="Settings">
             ⚙️
@@ -255,9 +305,21 @@ function App() {
                 onChange={(e) => setClientAddr(e.target.value)}
                 placeholder="127.0.0.1:9000"
               />
-
               <button onClick={handleConnect} class="primary">
-                🔗 Connect
+                🔗 Connect (IP)
+              </button>
+
+              <hr />
+
+              <label>Peer ID:</label>
+              <input
+                type="text"
+                value={connectById()}
+                onChange={(e) => setConnectById(e.target.value)}
+                placeholder="Enter peer ID"
+              />
+              <button onClick={handleConnectById} class="primary">
+                🌐 Connect by ID
               </button>
             </section>
           </div>
@@ -271,7 +333,9 @@ function App() {
               Status: <strong>{hostStatus()}</strong> | Port: {hostPort()} | Display: {selectedDisplay()}
             </p>
             <p class="hint">
-              Waiting for client connections... Share your IP:{hostPort()} with the client.
+              {peerId() && <>Your Peer ID: <strong class="peer-id-big">{peerId()}</strong> — share this with clients</>}
+              <br />
+              Or share your IP:{hostPort()} for direct connections.
             </p>
             <button onClick={handleStopHost} class="danger">
               ⏹ Stop Host

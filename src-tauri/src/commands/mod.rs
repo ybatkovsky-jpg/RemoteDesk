@@ -119,15 +119,27 @@ pub async fn start_host(
     }
 
     let host = Arc::new(tokio::sync::Mutex::new(host));
-
     *state.host.lock().await = Some(host.clone());
+
+    // Check if relay mode is configured
+    let config = state.config.lock().await.clone();
+    let peer_id = config.id.clone();
+    let relay_addr = config.server.relay_server.clone();
+    let relay_addr_for_mode = relay_addr.clone();
 
     let app_clone = app.clone();
     tokio::spawn(async move {
-        let result = {
+        let result = if !relay_addr.is_empty() {
+            // Relay mode: register with relay server and wait for bridged client.
+            tracing::info!("Host using relay server: {}", relay_addr);
+            let mut h = host.lock().await;
+            h.run_relay(display_id, fps, &relay_addr, &peer_id).await
+        } else {
+            // Direct mode: bind TCP listener and wait for direct connection.
             let mut h = host.lock().await;
             h.run(display_id, fps).await
         };
+
         match result {
             Ok(_) => {
                 let _ = app_clone.emit("host-status", serde_json::json!({"status": "stopped"}));
@@ -141,9 +153,10 @@ pub async fn start_host(
         }
     });
 
+    let mode = if !relay_addr_for_mode.is_empty() { "relay" } else { "direct" };
     let _ = app.emit(
         "host-status",
-        serde_json::json!({"status": "listening", "port": port}),
+        serde_json::json!({"status": "listening", "port": port, "mode": mode}),
     );
 
     Ok(())
@@ -206,6 +219,56 @@ pub async fn client_disconnect(state: State<'_, AppState>) -> Result<(), String>
 }
 
 #[tauri::command]
+pub async fn client_connect_by_id(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    peer_id: String,
+) -> Result<(), String> {
+    let config = state.config.lock().await.clone();
+    let relay_addr = config.server.relay_server.clone();
+
+    if relay_addr.is_empty() {
+        return Err("No relay server configured. Set relay_server in Settings.".into());
+    }
+
+    tracing::info!("Connecting to peer {} via relay {}", peer_id, relay_addr);
+
+    let client = Arc::new(ClientSession::new(relay_addr.clone()));
+    *state.client.lock().await = Some(client.clone());
+
+    let password = state.client_password.lock().await.clone();
+    let app_clone = app.clone();
+    let relay = relay_addr.clone();
+    let id = peer_id.clone();
+
+    tokio::spawn(async move {
+        match client.connect_by_id(&relay, &id, password.as_deref()).await {
+            Ok(_) => {
+                let _ = app_clone.emit(
+                    "connection-state",
+                    serde_json::json!({"state": "connected"}),
+                );
+            }
+            Err(e) => {
+                let _ = app_clone.emit(
+                    "connection-state",
+                    serde_json::json!({"state": "error", "message": e.to_string()}),
+                );
+            }
+        }
+    });
+
+    let _ = app.emit("connection-state", serde_json::json!({"state": "connecting"}));
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_peer_id(state: State<'_, AppState>) -> Result<String, String> {
+    Ok(state.config.lock().await.id.clone())
+}
+
+#[tauri::command]
 pub async fn client_get_frame(state: State<'_, AppState>) -> Result<Option<String>, String> {
     match state.client.lock().await.as_ref() {
         Some(client) => match client.latest_frame().await {
@@ -221,10 +284,14 @@ pub async fn client_get_frame(state: State<'_, AppState>) -> Result<Option<Strin
 }
 
 #[tauri::command]
-pub async fn client_get_frame_raw(state: State<'_, AppState>) -> Result<Option<Vec<u8>>, String> {
+pub async fn client_get_frame_raw(state: State<'_, AppState>) -> Result<Option<String>, String> {
     match state.client.lock().await.as_ref() {
         Some(client) => match client.latest_frame().await {
-            Some(frame) => Ok(Some(frame.data)),
+            Some(frame) => {
+                use base64::Engine;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&frame.data);
+                Ok(Some(b64))
+            }
             None => Ok(None),
         },
         None => Err("Not connected".into()),

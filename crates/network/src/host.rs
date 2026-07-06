@@ -77,6 +77,65 @@ impl HostSession {
         Ok(())
     }
 
+    /// Run the host in relay mode: connect to relay server, register peer ID,
+    /// wait for a client to be bridged in, then run the normal protocol.
+    pub async fn run_relay(
+        &mut self,
+        display_id: usize,
+        fps: u32,
+        relay_addr: &str,
+        peer_id: &str,
+    ) -> Result<()> {
+        self.fps = fps;
+        crypto::init();
+
+        let capturer = Capturer::new(display_id)?;
+        let width = capturer.width();
+        let height = capturer.height();
+        self.capturer = Some(capturer);
+
+        let (shutdown_tx, _) = broadcast::channel::<()>(1);
+        self.shutdown_tx = Some(shutdown_tx);
+
+        // Connect to relay server.
+        tracing::info!("Host connecting to relay at {} with ID {}", relay_addr, peer_id);
+        let mut stream = TcpStream::connect(relay_addr).await.map_err(|e| {
+            Error::Network(format!("Failed to connect to relay {}: {}", relay_addr, e))
+        })?;
+
+        // Send REGISTER command.
+        use tokio::io::AsyncWriteExt;
+        stream
+            .write_all(format!("REGISTER {}\n", peer_id).as_bytes())
+            .await
+            .map_err(|e| Error::Network(format!("Relay REGISTER write error: {}", e)))?;
+
+        // Read response.
+        let mut buf = [0u8; 256];
+        use tokio::io::AsyncReadExt;
+        let n = stream
+            .read(&mut buf)
+            .await
+            .map_err(|e| Error::Network(format!("Relay REGISTER read error: {}", e)))?;
+        let response = String::from_utf8_lossy(&buf[..n]).trim().to_string();
+
+        tracing::info!("Relay REGISTER response: {}", response);
+
+        if response == "REGISTER_OK paired" || response == "REGISTER_OK waiting" {
+            // Connected! The stream is now bridged to the client.
+            // Run the normal protocol over this bridged connection.
+            tracing::info!("Host relay established for peer {}", peer_id);
+            self.handle_client(stream, width, height).await?;
+        } else {
+            return Err(Error::Network(format!(
+                "Relay registration failed: {}",
+                response
+            )));
+        }
+
+        Ok(())
+    }
+
     async fn handle_client(
         &mut self,
         stream: TcpStream,

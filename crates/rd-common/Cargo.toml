@@ -19,3 +19,4 @@ anyhow.workspace = true
 dirs = "6"
 toml = "0.9"
 rand = "0.9"
+mac_address = "1.1"

@@ -141,6 +141,39 @@ impl FrameEncoder {
     pub fn compression_ratio(&self, original: usize, compressed: usize) -> f64 {
         original as f64 / compressed as f64
     }
+
+    /// H.264 encoding via OpenH264 (stub — library not yet integrated).
+    #[cfg(feature = "openh264")]
+    fn compress_h264(
+        &mut self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        seq: u64,
+    ) -> Result<CompressedFrame> {
+        // OpenH264 native library is not yet integrated.
+        // This stub prevents compile errors when the feature is enabled for negotiation.
+        tracing::warn!(
+            "H.264 encoding not yet implemented (OpenH264 library not integrated) — falling back to zstd"
+        );
+        self.compress_zstd(data, width, height, seq)
+    }
+
+    /// H.265 encoding via hardware codec (stub — library not yet integrated).
+    #[cfg(feature = "hwcodec")]
+    fn compress_h265(
+        &mut self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        seq: u64,
+    ) -> Result<CompressedFrame> {
+        // Hardware codec not yet integrated.
+        tracing::warn!(
+            "H.265 encoding not yet implemented (hwcodec library not integrated) — falling back to zstd"
+        );
+        self.compress_zstd(data, width, height, seq)
+    }
 }
 
 impl Default for FrameEncoder {

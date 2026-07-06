@@ -39,9 +39,10 @@ impl Config {
     }
 
     /// Load config from the standard location. Returns default if no config exists.
+    /// Auto-generates a peer ID if none is set.
     pub fn load() -> Self {
         let path = Self::config_path();
-        match std::fs::read_to_string(&path) {
+        let mut config = match std::fs::read_to_string(&path) {
             Ok(contents) => {
                 toml::from_str(&contents).unwrap_or_else(|e| {
                     tracing::warn!("Failed to parse config at {:?}: {}. Using defaults.", path, e);
@@ -52,7 +53,14 @@ impl Config {
                 tracing::info!("No config found at {:?}, using defaults.", path);
                 Config::default()
             }
+        };
+        // Auto-generate a stable peer ID on first run.
+        if config.id.is_empty() {
+            config.generate_id();
+            // Persist immediately so the ID survives restarts.
+            let _ = config.save();
         }
+        config
     }
 
     /// Save config to the standard location. Creates directories if needed.
@@ -69,15 +77,33 @@ impl Config {
         Ok(())
     }
 
-    /// Generate a new random peer ID.
+    /// Generate a stable peer ID from the machine's MAC address.
+    /// Falls back to a random 9-digit number if MAC cannot be obtained.
+    /// ID is a numeric string in the range 0..536870911 (like RustDesk).
     pub fn generate_id(&mut self) {
-        use rand::Rng;
-        let id: String = rand::rng()
-            .sample_iter(&rand::distr::Alphanumeric)
-            .take(12)
-            .map(char::from)
-            .collect();
-        self.id = format!("rd-{}", id);
+        if !self.id.is_empty() {
+            return; // already has an ID
+        }
+        self.id = Self::auto_id();
+    }
+
+    /// Compute a peer ID from MAC address (same algorithm as RustDesk).
+    pub fn auto_id() -> String {
+        if let Ok(Some(ma)) = mac_address::get_mac_address() {
+            let bytes = ma.bytes();
+            let mut id: u32 = 0;
+            // Skip first 2 bytes (OUI), use remaining for uniqueness
+            for b in &bytes[2..] {
+                id = (id << 8) | (*b as u32);
+            }
+            id &= 0x1FFF_FFFF; // 29 bits, like RustDesk
+            id.to_string()
+        } else {
+            // Fallback: random 9-digit number
+            use rand::Rng as _;
+            let id: u32 = rand::rng().random_range(1_000_000_000u32..2_000_000_000u32);
+            id.to_string()
+        }
     }
 }
 

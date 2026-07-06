@@ -9,6 +9,7 @@ use codec::FrameDecoder;
 use crypto::{KeyExchange, SessionCipher};
 use rd_common::{Error, Result};
 use rd_common::proto::{KeyEvent, MouseEvent};
+use std::sync::Mutex as StdMutex;
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, Mutex};
@@ -53,7 +54,7 @@ pub struct ClientSession {
     latest_frame: Mutex<Option<ReceivedFrame>>,
     frame_tx: broadcast::Sender<()>,
     state: Mutex<ConnectionState>,
-    shutdown_tx: Mutex<Option<broadcast::Sender<()>>>,
+    shutdown_tx: StdMutex<Option<broadcast::Sender<()>>>,
     display_size: Mutex<Option<(u32, u32)>>,
     /// Writer half of the TCP stream, shared so input commands can send events.
     writer: Mutex<Option<OwnedWriteHalf>>,
@@ -89,7 +90,7 @@ impl ClientSession {
             latest_frame: Mutex::new(None),
             frame_tx,
             state: Mutex::new(ConnectionState::Disconnected),
-            shutdown_tx: Mutex::new(None),
+            shutdown_tx: StdMutex::new(None),
             display_size: Mutex::new(None),
             writer: Mutex::new(None),
             cipher: Mutex::new(None),
@@ -107,7 +108,60 @@ impl ClientSession {
         self.connect_with_password(None).await
     }
 
-    /// Connect and optionally authenticate with password.
+    /// Connect to a host via relay server using its peer ID.
+    /// The relay server bridges the TCP connection to the target host.
+    pub async fn connect_by_id(
+        &self,
+        relay_addr: &str,
+        peer_id: &str,
+        password: Option<&str>,
+    ) -> Result<()> {
+        crypto::init();
+
+        {
+            let mut state = self.state.lock().await;
+            *state = ConnectionState::Connecting;
+        }
+
+        // Connect to relay server.
+        tracing::info!("Client connecting to relay at {} for peer {}", relay_addr, peer_id);
+        let mut stream = TcpStream::connect(relay_addr).await.map_err(|e| {
+            Error::Network(format!("Failed to connect to relay {}: {}", relay_addr, e))
+        })?;
+
+        // Send CONNECT command.
+        use tokio::io::AsyncWriteExt;
+        stream
+            .write_all(format!("CONNECT {}\n", peer_id).as_bytes())
+            .await
+            .map_err(|e| Error::Network(format!("Relay CONNECT write error: {}", e)))?;
+
+        // Read response.
+        let mut buf = [0u8; 256];
+        use tokio::io::AsyncReadExt;
+        let n = stream
+            .read(&mut buf)
+            .await
+            .map_err(|e| Error::Network(format!("Relay CONNECT read error: {}", e)))?;
+        let response = String::from_utf8_lossy(&buf[..n]).trim().to_string();
+
+        tracing::info!("Relay CONNECT response: {}", response);
+
+        if response == "CONNECT_OK paired" || response == "CONNECT_OK waiting" {
+            // Connected! The stream is now bridged to the host.
+            // Run the normal handshake + encrypted loop over this stream.
+            self.run_protocol(stream, password).await?;
+        } else {
+            return Err(Error::Network(format!(
+                "Relay connection failed: {}",
+                response
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Connect and optionally authenticate with password (direct TCP).
     pub async fn connect_with_password(&self, password: Option<&str>) -> Result<()> {
         // ── Init crypto ───────────────────────────────────
         crypto::init();
@@ -123,8 +177,15 @@ impl ClientSession {
 
         tracing::info!("Connected to host at {}", self.host_addr);
 
+        self.run_protocol(stream, password).await
+    }
+
+    /// Internal: run the RemoteDesk protocol over an established TCP stream.
+    /// Used by both direct TCP and relay-bridged connections.
+    async fn run_protocol(&self, stream: TcpStream, password: Option<&str>) -> Result<()> {
+
         let (shutdown_tx, mut shutdown_rx) = broadcast::channel::<()>(1);
-        *self.shutdown_tx.lock().await = Some(shutdown_tx);
+        *self.shutdown_tx.lock().unwrap() = Some(shutdown_tx);
 
         let (mut reader, mut writer) = stream.into_split();
 
@@ -519,6 +580,12 @@ impl ClientSession {
 
     pub fn stop(&self) {
         tracing::info!("Client stop requested");
+        // Send shutdown signal to break the message loop
+        if let Ok(mut guard) = self.shutdown_tx.lock() {
+            if let Some(tx) = guard.take() {
+                let _ = tx.send(());
+            }
+        }
     }
 }
 
