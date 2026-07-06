@@ -29,6 +29,17 @@
     "active": true,
     "targets": "all",
     "icon": ["icons/icon.ico"],
-    "createUpdaterArtifacts": false
+    "createUpdaterArtifacts": true,
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      },
+      "wix": {}
+    },
+    "macOS": {
+      "frameworks": [],
+      "minimumSystemVersion": "11.0"
+    },
+    "linux": {}
   }
 }

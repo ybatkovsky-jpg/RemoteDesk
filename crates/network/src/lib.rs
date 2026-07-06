@@ -7,8 +7,10 @@ pub mod protocol;
 pub mod host;
 pub mod client;
 pub mod udp;
+pub mod rendezvous;
 
 pub use host::HostSession;
 pub use client::{ChatEntry, ClientSession, ConnectionState, FileTransferProgress};
 pub use protocol::{FileEntry, NetworkMessage};
+pub use rendezvous::RendezvousClient;
 pub use udp::UdpTransport;

@@ -2,7 +2,9 @@
 //!
 //! Phase 2: E2E encryption via NaCl/libsodium key exchange.
 //! Phase 3: Authentication, chat, file transfer, display switching.
+//! Phase 4: Audio capture + Opus encoding + streaming.
 
+use audio::{AudioCapturer, AudioEncoder};
 use codec::FrameEncoder;
 use crypto::{KeyExchange, SessionCipher};
 use input_sim::InputSimulator;
@@ -84,7 +86,8 @@ impl HostSession {
         let frame_interval = std::time::Duration::from_secs_f64(1.0 / self.fps as f64);
         let _frame_timeout = frame_interval / 2;
 
-        let (mut reader, mut writer) = stream.into_split();
+        let (mut reader, writer) = stream.into_split();
+        let writer = Arc::new(Mutex::new(writer));
         let shutdown_tx = self.shutdown_tx.as_ref().unwrap().clone();
         let mut shutdown_rx = shutdown_tx.subscribe();
 
@@ -114,7 +117,7 @@ impl HostSession {
         self.encoder = FrameEncoder::new().with_codec(selected_codec);
 
         protocol::write_message(
-            &mut writer,
+            &mut *writer.lock().await,
             &NetworkMessage::Welcome {
                 host_version: rd_common::VERSION.to_string(),
                 display_width: width,
@@ -143,7 +146,7 @@ impl HostSession {
         };
 
         protocol::write_message(
-            &mut writer,
+            &mut *writer.lock().await,
             &NetworkMessage::CryptoHandshakeAck {
                 public_key: key_exchange.public_key_bytes(),
             },
@@ -183,7 +186,7 @@ impl HostSession {
 
             {
                 let mut c = cipher.lock().await;
-                protocol::write_encrypted(&mut writer, &response, &mut c).await?;
+                protocol::write_encrypted(&mut *writer.lock().await, &response, &mut c).await?;
             }
 
             if !authenticated {
@@ -193,6 +196,10 @@ impl HostSession {
 
             tracing::info!("Client authenticated successfully");
         }
+
+        // Audio streaming shutdown channel.
+        let (audio_shutdown_tx, audio_shutdown_rx) = broadcast::channel::<()>(1);
+        let audio_shutdown_rx = Arc::new(Mutex::new(audio_shutdown_rx));
 
         // Wrap capturer and encoder in Arcs for the reader task to access.
         let capturer_arc = Arc::new(Mutex::new(self.capturer.take()));
@@ -205,9 +212,12 @@ impl HostSession {
 
         // ── Spawn reader task ────────────────────────────
         let reader_cipher = cipher.clone();
+        let reader_writer = writer.clone();
         let reader_capturer = capturer_arc.clone();
         let reader_fps = fps_arc.clone();
         let reader_quality = quality_arc.clone();
+        let reader_audio_shutdown_tx = audio_shutdown_tx.clone();
+        let _reader_audio_shutdown_rx = audio_shutdown_rx.clone();
         tokio::spawn(async move {
             let mut input_sim = InputSimulator::new();
             loop {
@@ -262,7 +272,82 @@ impl HostSession {
                     }
                     Ok(Some(NetworkMessage::AudioControl { enable })) => {
                         tracing::info!("Client requested audio: {}", enable);
-                        // Phase 3: audio capture/encoding not yet implemented.
+                        if enable {
+                            // Start audio capture: std::thread for capture, tokio for I/O.
+                            let (audio_data_tx, mut audio_data_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(32);
+                            
+                            // Spawn tokio task for network I/O.
+                            let audio_writer2 = reader_writer.clone();
+                            let audio_cipher2 = reader_cipher.clone();
+                            tokio::spawn(async move {
+                                while let Some(opus_data) = audio_data_rx.recv().await {
+                                    let msg = NetworkMessage::AudioFrame {
+                                        data: opus_data,
+                                        timestamp: std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_millis() as u64,
+                                    };
+                                    let result = {
+                                        let mut c = audio_cipher2.lock().await;
+                                        protocol::write_encrypted(
+                                            &mut *audio_writer2.lock().await,
+                                            &msg,
+                                            &mut c,
+                                        )
+                                        .await
+                                    };
+                                    if let Err(e) = result {
+                                        tracing::error!("Audio send error: {}", e);
+                                        break;
+                                    }
+                                }
+                            });
+
+                            // Spawn std::thread for audio capture (non-Send safe).
+                            let mut audio_shutdown2 = reader_audio_shutdown_tx.subscribe();
+                            std::thread::spawn(move || {
+                                tracing::info!("Audio capture thread started");
+                                let mut capturer = match AudioCapturer::new() {
+                                    Ok(c) => c,
+                                    Err(e) => {
+                                        tracing::error!("Audio capture init: {}", e);
+                                        return;
+                                    }
+                                };
+                                let mut encoder = match AudioEncoder::new() {
+                                    Ok(e) => e,
+                                    Err(e) => {
+                                        tracing::error!("Audio encoder init: {}", e);
+                                        return;
+                                    }
+                                };
+                                loop {
+                                    if audio_shutdown2.try_recv().is_ok() {
+                                        tracing::info!("Audio capture stopped");
+                                        break;
+                                    }
+                                    if let Some(pcm) = capturer.read_frame() {
+                                        match encoder.encode(&pcm) {
+                                            Ok(opus_data) => {
+                                                if audio_data_tx.blocking_send(opus_data).is_err() {
+                                                    tracing::error!("Audio channel closed");
+                                                    break;
+                                                }
+                                            }
+                                            Err(e) => {
+                                                tracing::error!("Audio encode error: {}", e);
+                                            }
+                                        }
+                                    } else {
+                                        std::thread::sleep(std::time::Duration::from_millis(5));
+                                    }
+                                }
+                            });
+                        } else {
+                            // Stop audio capture.
+                            let _ = reader_audio_shutdown_tx.send(());
+                        }
                     }
                     Ok(Some(NetworkMessage::ChatMessage { text, sender, timestamp })) => {
                         tracing::info!("Chat from {}: {}", sender, text);
@@ -357,7 +442,7 @@ impl HostSession {
             let result = {
                 let mut c = cipher.lock().await;
                 protocol::write_encrypted(
-                    &mut writer,
+                    &mut *writer.lock().await,
                     &NetworkMessage::VideoFrame(compressed),
                     &mut c,
                 )

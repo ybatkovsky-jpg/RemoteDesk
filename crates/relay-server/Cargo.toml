@@ -1,0 +1,18 @@
+[package]
+name = "relay-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Lightweight TCP relay server for RemoteDesk P2P fallback"
+
+[[bin]]
+name = "relay-server"
+path = "src/main.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio.workspace = true
+anyhow.workspace = true

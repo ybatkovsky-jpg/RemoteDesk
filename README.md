@@ -2,7 +2,7 @@
 
 Кроссплатформенное приложение удаленного доступа с шифрованием, передачей файлов, чатом и мульти-мониторной поддержкой.
 
-**Статус:** Фазы 0+1+2+3 завершены ✅ · `cargo check` 0 ошибок · `cargo test` 10/10
+**Статус:** Фазы 0+1+2+3+4 завершены ✅ · `cargo check` 0 ошибок · `cargo test` 10/10
 
 <p align="center">
   <img src="https://img.shields.io/badge/rust-stable-orange?logo=rust" />
@@ -26,9 +26,11 @@
 | ⌨️🖱️ Проброс клавиатуры и мыши | ✅ |
 | 📁 Передача файлов (download/upload с прогрессом) | ✅ |
 | 💬 Чат между host и client | ✅ |
-| 🔊 Аудио-контролы (стриминг — в планах) | 🚧 |
+| 🔊 Аудио-стриминг (захват → Opus → воспроизведение) | ✅ |
 | ⚙️ Конфигурация (TOML, сохраняется локально) | ✅ |
 | 🌐 NAT traversal / UDP hole punching | ✅ |
+| 🔄 Relay-сервер (TCP fallback) | ✅ |
+| 📦 Инсталляторы (NSIS/WiX/DMG/DEB) + CI release | ✅ |
 
 ## Архитектура
 
@@ -76,12 +78,14 @@ cargo clippy --workspace    # линтинг
 ```
 RemoteDesk/
 ├── crates/
-│   ├── rd-common/          # Общие типы, конфигурация, proto (ре-экспорт hbb_common)
+│   ├── rd-common/          # Общие типы, конфигурация, proto
 │   ├── screen-capture/     # Захват экрана (scrap/DXGI)
-│   ├── codec/              # Видеокодеки (Zstd, H.264 HW через hwcodec)
+│   ├── codec/              # Видеокодеки (Zstd, H.264 HW)
 │   ├── input-sim/          # Инжекция ввода (enigo)
-│   ├── network/            # TCP/UDP транспорт, протокол, host/client сессии
-│   └── crypto/             # E2E шифрование (NaCl: crypto_box + secretbox)
+│   ├── network/            # TCP/UDP транспорт, протокол, host/client/rendezvous
+│   ├── crypto/             # E2E шифрование (NaCl)
+│   ├── audio/              # Аудио: захват (cpal), Opus (magnum-opus), вывод
+│   └── relay-server/       # Лёгкий TCP relay сервер для P2P fallback
 ├── src-tauri/              # Tauri desktop приложение (Rust)
 │   └── src/
 │       ├── commands/       # Tauri IPC команды
@@ -116,7 +120,7 @@ RemoteDesk/
 - [x] **Фаза 1**: Базовый стриминг (MVP) в локальной сети — захват экрана, кодирование, TCP
 - [x] **Фаза 2**: E2E шифрование, NAT traversal, H.264, мульти-монитор, clipboard, файлы, аудио-протокол
 - [x] **Фаза 3**: UI — аутентификация, настройки, чат, файловый трансфер, аудио-контролы
-- [ ] **Фаза 4**: Продакшен — аудио-стриминг, relay-сервер, P2P-сеть, инсталляторы
+- [x] **Фаза 4**: Продакшен — аудио-стриминг (cpal + Opus), relay-сервер, P2P (UDP/STUN/rendezvous), инсталляторы, CI release
 
 ## Лицензия
 

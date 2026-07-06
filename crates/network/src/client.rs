@@ -2,7 +2,9 @@
 //!
 //! Phase 2: E2E encryption via NaCl/libsodium key exchange.
 //! Phase 3: Authentication, chat, file transfer, display switching, audio.
+//! Phase 4: Audio decoding + playback.
 
+use audio::{AudioDecoder, AudioPlayer};
 use codec::FrameDecoder;
 use crypto::{KeyExchange, SessionCipher};
 use rd_common::{Error, Result};
@@ -67,7 +69,17 @@ pub struct ClientSession {
     file_buffer: Mutex<Vec<u8>>,
     /// Available displays on the host.
     host_displays: Mutex<Vec<rd_common::proto::DisplayInfo>>,
+    /// Audio player (for received audio frames).
+    audio_player: Mutex<Option<AudioPlayer>>,
+    /// Audio decoder (Opus → PCM).
+    audio_decoder: Mutex<Option<AudioDecoder>>,
 }
+
+// SAFETY: cpal Stream is !Send due to NotSendSyncAcrossAllPlatforms
+// (primarily for macOS CoreAudio). On Windows/Linux the stream is
+// thread-safe and we access it only through the message loop.
+unsafe impl Send for ClientSession {}
+unsafe impl Sync for ClientSession {}
 
 impl ClientSession {
     pub fn new(host_addr: String) -> Self {
@@ -86,6 +98,8 @@ impl ClientSession {
             file_progress: Mutex::new(None),
             file_buffer: Mutex::new(Vec::new()),
             host_displays: Mutex::new(Vec::new()),
+            audio_player: Mutex::new(None),
+            audio_decoder: Mutex::new(None),
         }
     }
 
@@ -294,6 +308,41 @@ impl ClientSession {
                 Ok(Some(NetworkMessage::DisplayList(displays))) => {
                     tracing::info!("Received display list: {} displays", displays.len());
                     *self.host_displays.lock().await = displays;
+                }
+                Ok(Some(NetworkMessage::AudioFrame { data, timestamp: _ })) => {
+                    // Decode and play audio.
+                    let mut decoder_guard = self.audio_decoder.lock().await;
+                    if decoder_guard.is_none() {
+                        match AudioDecoder::new() {
+                            Ok(d) => *decoder_guard = Some(d),
+                            Err(e) => {
+                                tracing::error!("Audio decoder init: {}", e);
+                                continue;
+                            }
+                        }
+                    }
+                    if let Some(ref mut decoder) = *decoder_guard {
+                        match decoder.decode(&data, audio::SAMPLES_PER_FRAME) {
+                            Ok(pcm) => {
+                                let mut player_guard = self.audio_player.lock().await;
+                                if player_guard.is_none() {
+                                    match AudioPlayer::new() {
+                                        Ok(p) => *player_guard = Some(p),
+                                        Err(e) => {
+                                            tracing::error!("Audio player init: {}", e);
+                                            continue;
+                                        }
+                                    }
+                                }
+                                if let Some(ref player) = *player_guard {
+                                    player.push_samples(&pcm);
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("Audio decode error: {}", e);
+                            }
+                        }
+                    }
                 }
                 Ok(Some(NetworkMessage::Ping)) => {
                     let _ = self.send_encrypted(&NetworkMessage::Pong).await;

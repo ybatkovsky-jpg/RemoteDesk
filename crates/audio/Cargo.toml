@@ -1,0 +1,23 @@
+[package]
+name = "audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Audio capture, Opus encoding/decoding, and playback for RemoteDesk"
+
+[dependencies]
+rd-common = { path = "../rd-common" }
+serde.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Audio capture/playback
+cpal = "0.15"
+
+# Opus codec
+magnum-opus = "0.3"
+
+# Ring buffer for audio streaming
+ringbuf = "0.4"

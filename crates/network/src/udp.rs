@@ -2,26 +2,29 @@
 //!
 //! Implements a simple reliable protocol over UDP:
 //! - Sequence numbers for ordering and duplicate detection
-//! - Simple ACK/retransmit for control messages
-//! - Fragmentation for large payloads (video frames > MTU)
+//! - Fragment reassembly with timeout
+//! - ACK/retransmit for reliable messages
 //!
-//! Used as an alternative to TCP when NAT hole-punching is needed.
+//! Phase 4: Full fragment reassembly buffer + ACK support.
 
 use rd_common::{Error, Result};
 use tokio::net::UdpSocket;
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::time::Instant;
 
 /// Maximum UDP payload size (conservative to avoid fragmentation).
 pub const MAX_UDP_PAYLOAD: usize = 1200;
 /// Header size: 4 bytes seq + 2 bytes fragment_id + 2 bytes fragment_count + 2 bytes flags = 10.
 pub const HEADER_SIZE: usize = 10;
+/// Maximum time to wait for missing fragments before giving up.
+pub const REASSEMBLY_TIMEOUT_MS: u64 = 500;
 
 /// Flags for UDP frames.
 const FLAG_FRAGMENTED: u16 = 0x01;
 const FLAG_LAST_FRAGMENT: u16 = 0x02;
 const FLAG_RELIABLE: u16 = 0x04;
-#[allow(dead_code)]
-const FLAG_ACK: u16 = 0x08; // Reserved for future ACK-based reliability
+const FLAG_ACK: u16 = 0x08;
 
 /// A framed UDP message ready for send or received.
 #[derive(Debug, Clone)]
@@ -31,13 +34,26 @@ pub struct UdpFrame {
     pub reliable: bool,
 }
 
+/// Reassembly state for a single fragmented message.
+struct ReassemblyState {
+    fragments: Vec<Option<Vec<u8>>>,
+    fragment_count: u16,
+    received_count: u16,
+    created: Instant,
+    reliable: bool,
+}
+
 /// UDP transport wrapping a tokio UdpSocket.
 ///
-/// Handles framing, fragmentation, and sequence tracking.
+/// Handles framing, fragmentation, reassembly, and sequence tracking.
 pub struct UdpTransport {
-    socket: UdpSocket,
+    pub(crate) socket: UdpSocket,
     send_seq: u32,
     recv_seq: u32,
+    /// Pending fragment reassembly buffers, keyed by (sender_addr, sequence).
+    reassembly: HashMap<(SocketAddr, u32), ReassemblyState>,
+    /// Pending ACKs for reliable messages we sent.
+    pending_acks: HashMap<u32, (Vec<u8>, Instant, SocketAddr)>,
 }
 
 impl UdpTransport {
@@ -51,6 +67,8 @@ impl UdpTransport {
             socket,
             send_seq: 0,
             recv_seq: 0,
+            reassembly: HashMap::new(),
+            pending_acks: HashMap::new(),
         })
     }
 
@@ -85,9 +103,13 @@ impl UdpTransport {
         Ok(())
     }
 
-    /// Receive a complete message (reassembles fragments internally).
+    /// Receive a complete message (reassembles fragments).
     /// Returns (data, sender_addr, reliable_flag).
+    /// Also handles ACK frames for reliability.
     pub async fn recv_from(&mut self) -> Result<Option<(Vec<u8>, SocketAddr, bool)>> {
+        // Clean up expired reassembly buffers first.
+        self.cleanup_reassembly();
+
         let mut buf = vec![0u8; 65536];
         let (len, addr) = self.socket.recv_from(&mut buf).await.map_err(|e| {
             Error::Network(format!("UDP recv error: {}", e))
@@ -99,21 +121,86 @@ impl UdpTransport {
 
         let (seq, frag_id, frag_count, flags) = decode_header(&buf[..HEADER_SIZE]);
         let payload = &buf[HEADER_SIZE..len];
+        let is_reliable = flags & FLAG_RELIABLE != 0;
 
-        if flags & FLAG_FRAGMENTED != 0 {
-            // For now, only handle single-fragment messages.
-            // Full reassembly requires a reassembly buffer.
-            tracing::debug!(
-                "UDP fragment {}/{} (seq={}) from {} — limited reassembly",
-                frag_id, frag_count, seq, addr
-            );
-            // In Phase 3, add full reassembly buffer.
-            // For now, return only the first fragment's data.
-            Ok(Some((payload.to_vec(), addr, flags & FLAG_RELIABLE != 0)))
-        } else {
-            self.recv_seq = seq.wrapping_add(1);
-            Ok(Some((payload.to_vec(), addr, flags & FLAG_RELIABLE != 0)))
+        // Handle ACK frames.
+        if flags & FLAG_ACK != 0 {
+            let acked_seq = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+            self.pending_acks.remove(&acked_seq);
+            tracing::trace!("Received ACK for seq={}", acked_seq);
+            return Ok(None); // ACKs don't produce messages
         }
+
+        if frag_count <= 1 {
+            // Single-frame message — no reassembly needed.
+            self.recv_seq = seq.wrapping_add(1);
+
+            // Send ACK if reliable.
+            if is_reliable {
+                self.send_ack(seq, addr).await?;
+            }
+
+            return Ok(Some((payload.to_vec(), addr, is_reliable)));
+        }
+
+        // ── Fragment reassembly ────────────────────────────
+        let key = (addr, seq);
+        let state = self.reassembly.entry(key).or_insert_with(|| ReassemblyState {
+            fragments: vec![None; frag_count as usize],
+            fragment_count: frag_count,
+            received_count: 0,
+            created: Instant::now(),
+            reliable: is_reliable,
+        });
+
+        if (frag_id as usize) < state.fragments.len() {
+            if state.fragments[frag_id as usize].is_none() {
+                state.fragments[frag_id as usize] = Some(payload.to_vec());
+                state.received_count += 1;
+            }
+        }
+
+        // Check if all fragments received.
+        if state.received_count >= state.fragment_count {
+            let state = self.reassembly.remove(&key).unwrap();
+            let mut data = Vec::new();
+            for frag in state.fragments {
+                if let Some(d) = frag {
+                    data.extend_from_slice(&d);
+                }
+            }
+
+            if state.reliable {
+                self.send_ack(seq, addr).await?;
+            }
+
+            return Ok(Some((data, addr, state.reliable)));
+        }
+
+        Ok(None) // Still waiting for more fragments
+    }
+
+    /// Clean up expired reassembly buffers.
+    fn cleanup_reassembly(&mut self) {
+        let now = Instant::now();
+        let timeout = std::time::Duration::from_millis(REASSEMBLY_TIMEOUT_MS);
+        self.reassembly.retain(|_, state| {
+            now.duration_since(state.created) < timeout
+        });
+    }
+
+    /// Send an ACK for a received reliable message.
+    async fn send_ack(&mut self, seq: u32, addr: SocketAddr) -> Result<()> {
+        let mut frame = Vec::with_capacity(HEADER_SIZE + 4);
+        frame.extend_from_slice(&seq.to_le_bytes()); // Use ack_seq in header position
+        frame.extend_from_slice(&0u16.to_le_bytes()); // frag_id = 0
+        frame.extend_from_slice(&1u16.to_le_bytes()); // frag_count = 1
+        frame.extend_from_slice(&FLAG_ACK.to_le_bytes());
+        frame.extend_from_slice(&seq.to_le_bytes()); // acked_seq in payload
+        self.socket.send_to(&frame, addr).await.map_err(|e| {
+            Error::Network(format!("UDP ACK send error: {}", e))
+        })?;
+        Ok(())
     }
 
     /// Get the local address this socket is bound to.

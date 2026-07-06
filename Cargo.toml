@@ -6,6 +6,8 @@ members = [
     "crates/input-sim",
     "crates/network",
     "crates/crypto",
+    "crates/audio",
+    "crates/relay-server",
     "src-tauri",
 ]
 resolver = "2"
